@@ -728,6 +728,12 @@ tcpServer.on('close', () => {
 // Start HTTP server
 server.listen(config.http.port, '0.0.0.0', () => {
     logger.info(`HTTP server listening on port ${config.http.port} (all interfaces)`);
+    if (typeof process.send === 'function') {
+        process.send('ready');
+    }
+}).on('error', (error) => {
+    logger.error(`HTTP server error on port ${config.http.port}:`, error);
+    process.exit(1);
 });
 
 // Export shutdown function for use in server.js

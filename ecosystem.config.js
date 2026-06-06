@@ -1,18 +1,16 @@
-// Load environment variables from env.production
-// Make dotenv optional - if not available, try to read file manually or use PM2 env_file
+// Load environment variables from env.production (relative to this file)
+const path = require('path');
+const envProductionPath = path.join(__dirname, 'env.production');
+
 let envLoaded = false;
 try {
-    // Try to use dotenv if available
-    require('dotenv').config({ path: './env.production' });
+    require('dotenv').config({ path: envProductionPath });
     envLoaded = true;
 } catch (error) {
-    // dotenv not available, try manual file reading
     try {
         const fs = require('fs');
-        const path = require('path');
-        const envFile = path.join(__dirname, 'env.production');
-        if (fs.existsSync(envFile)) {
-            const envContent = fs.readFileSync(envFile, 'utf8');
+        if (fs.existsSync(envProductionPath)) {
+            const envContent = fs.readFileSync(envProductionPath, 'utf8');
             envContent.split('\n').forEach(line => {
                 const trimmedLine = line.trim();
                 if (trimmedLine && !trimmedLine.startsWith('#')) {
@@ -26,16 +24,15 @@ try {
             envLoaded = true;
         }
     } catch (manualError) {
-        // If manual reading fails, continue without loading env file
-        // Environment variables should be set manually or via PM2 env_file option
-        console.warn('Warning: Could not load env.production. Set environment variables manually or use PM2 env_file option.');
+        console.warn(`Warning: Could not load ${envProductionPath}. Set environment variables manually.`);
     }
 }
 
 module.exports = {
   apps: [{
     name: 'gali-parse',
-    script: 'backend/src/server.js',
+    cwd: __dirname,
+    script: path.join(__dirname, 'backend/src/server.js'),
     instances: process.env.PM2_INSTANCES || 1,
     exec_mode: process.env.PM2_EXEC_MODE || 'fork',
     autorestart: true,
@@ -88,20 +85,18 @@ module.exports = {
     
     // Advanced PM2 options
     kill_timeout: 5000,
-    listen_timeout: 3000,
-    wait_ready: true,
-    
+    listen_timeout: 10000,
+    wait_ready: false,
+
     // Monitoring
     pmx: true,
-    
+
     // Source map support
     source_map_support: true,
-    
+
     // Node.js options
     node_args: [
-      '--max-old-space-size=2048',
-      '--optimize-for-size',
-      '--gc-interval=100'
+      '--max-old-space-size=2048'
     ]
   }]
 };

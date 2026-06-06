@@ -343,6 +343,30 @@ sudo ss -tlnp | grep -E '8080|8081'
 pm2 restart gali-parse
 ```
 
+### PM2 shows online but browser cannot connect
+
+Usually the process is crash-looping (check **↺ restarts** and **0b memory**):
+
+```bash
+cd /opt/linuxParser2
+pm2 delete gali-parse
+pm2 start ecosystem.config.js
+pm2 logs gali-parse --lines 80
+ss -tlnp | grep -E '8081|8080|3003'
+curl -v http://127.0.0.1:8081/api/auth/check
+```
+
+Common causes:
+- PM2 started from the wrong directory — always run `pm2 start` from `/opt/linuxParser2`
+- `JWT_SECRET` / `SESSION_SECRET` still placeholder values in `env.production`
+- Port 8081 already used by another app (`iot-monitoring`, etc.)
+
+```bash
+sudo ss -tlnp | grep 8081
+sudo ufw allow 8081/tcp
+sudo ufw allow 8080/tcp
+```
+
 ### `no such table: users` after init-database
 
 This happens if `init-database.js` and `create-default-admin.js` used different database files. Re-run both from `backend/` (they now share `env.production`):
