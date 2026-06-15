@@ -27,6 +27,8 @@ A production-ready GPS tracking parser for Galileosky devices with web dashboard
 
 ## 🛠️ Installation
 
+See **[DATABASE_MIGRATION.md](DATABASE_MIGRATION.md)** to merge data from `/opt/LinuxParser` into `/opt/linuxParser2`.
+
 ### Fresh Ubuntu server install
 
 See **[FRESH_INSTALL_UBUNTU.md](FRESH_INSTALL_UBUNTU.md)** for a complete guide (clone from [linuxParser2](https://github.com/haryowl/linuxParser2), ports **8080/8081**, PM2, Nginx).
