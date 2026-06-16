@@ -252,6 +252,15 @@ Options for large DB:
 
 Records merge runs **per IMEI** and may take **several hours**.
 
+**Records only** (after devices/groups already merged):
+
+```bash
+pm2 stop gali-parse
+cd /opt/linuxParser2/backend
+node scripts/mergeSqliteDatabase.js ./data/old-prod.sqlite --records-only
+pm2 start gali-parse
+```
+
 ### Laptop copy (only if unavoidable)
 
 ```powershell
