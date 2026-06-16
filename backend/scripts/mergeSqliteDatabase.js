@@ -8,7 +8,7 @@
  *   cd /opt/linuxParser2/backend
  *   node scripts/mergeSqliteDatabase.js ./data/old-prod.sqlite
  *   node scripts/mergeSqliteDatabase.js ./data/old-prod.sqlite --skip-records
- *   node scripts/mergeSqliteDatabase.js ./data/old-prod.sqlite --no-backup
+ *   node scripts/mergeSqliteDatabase.js ./data/old-prod.sqlite --records-only
  */
 
 function formatBytes(bytes) {
@@ -39,6 +39,7 @@ loadProductionEnv();
 
 const args = process.argv.slice(2);
 const skipRecords = args.includes('--skip-records');
+const recordsOnly = args.includes('--records-only');
 const skipBackup = args.includes('--no-backup');
 const skipIntegrityCheck = args.includes('--skip-integrity-check');
 const oldDbPath = path.resolve(args.find((a) => !a.startsWith('--')) || '');
@@ -263,7 +264,10 @@ async function mergeRecordsBatched(db, stats, failed) {
 
   let imeis = [];
   try {
-    imeis = await all(db, 'SELECT imei FROM olddb.Devices ORDER BY imei');
+    const imeiSql = recordsOnly
+      ? 'SELECT imei FROM olddb.Devices WHERE imei IN (SELECT imei FROM main.Devices) ORDER BY imei'
+      : 'SELECT imei FROM olddb.Devices ORDER BY imei';
+    imeis = await all(db, imeiSql);
   } catch (error) {
     failed.push({ table: name, error: `Cannot read old Devices: ${error.message}` });
     console.log(`  skip ${name} (${error.message})`);
@@ -340,7 +344,16 @@ async function configureMergePragmas(db) {
 async function main() {
   if (!oldDbPath || !fs.existsSync(oldDbPath)) {
     console.error('Usage: node scripts/mergeSqliteDatabase.js /path/to/old-prod.sqlite [options]');
-    console.error('Options: --skip-records  --no-backup  --skip-integrity-check');
+    console.error('Options:');
+    console.error('  --records-only         Merge Records only (devices already merged)');
+    console.error('  --skip-records         Skip Records');
+    console.error('  --no-backup            Do not copy prod.sqlite before merge');
+    console.error('  --skip-integrity-check Skip quick_check on old DB');
+    process.exit(1);
+  }
+
+  if (recordsOnly && skipRecords) {
+    console.error('Cannot use --records-only and --skip-records together');
     process.exit(1);
   }
 
@@ -362,13 +375,18 @@ async function main() {
   }
 
   const freeBytes = getFreeDiskBytes(newDbPath);
-  const neededBytes = oldSize + newSize + (skipBackup ? 0 : newSize);
+  const recordsGrowth = recordsOnly ? oldSize : oldSize;
+  const neededBytes = (skipBackup ? 0 : newSize) + (recordsOnly ? recordsGrowth : oldSize + newSize);
   if (freeBytes !== null) {
     console.log(`  Disk free: ${formatBytes(freeBytes)}, estimated need: ${formatBytes(neededBytes)}`);
     if (freeBytes < neededBytes) {
       console.error('\nERROR: Not enough disk space. Free space or use --no-backup (risky).');
       process.exit(1);
     }
+  }
+
+  if (recordsOnly) {
+    console.log('\nMode: Records only (other tables already merged)\n');
   }
 
   if (!skipIntegrityCheck && oldSize < HUGE_DB_BYTES) {
@@ -411,12 +429,14 @@ async function main() {
     }
   }
 
-  console.log('\nMerging (new server users are kept)...');
+  console.log(recordsOnly ? '\nMerging Records only...' : '\nMerging (new server users are kept)...');
   const stats = {};
   const failed = [];
 
-  for (const spec of MERGE_TABLES) {
-    await mergeTable(db, spec, stats, failed);
+  if (!recordsOnly) {
+    for (const spec of MERGE_TABLES) {
+      await mergeTable(db, spec, stats, failed);
+    }
   }
 
   if (!skipRecords) {
