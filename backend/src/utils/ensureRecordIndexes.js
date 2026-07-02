@@ -1,13 +1,7 @@
 'use strict';
 
 const logger = require('./logger');
-
-const RECORD_INDEXES = [
-  { name: 'records_device_imei_idx', fields: ['deviceImei'] },
-  { name: 'records_datetime_idx', fields: ['datetime'] },
-  { name: 'records_timestamp_idx', fields: ['timestamp'] },
-  { name: 'records_device_datetime_idx', fields: ['deviceImei', 'datetime'] }
-];
+const { RECORD_INDEXES } = require('./recordIndexDefinitions');
 
 async function ensureRecordIndexes(sequelize) {
   const queryInterface = sequelize.getQueryInterface();
@@ -27,4 +21,4 @@ async function ensureRecordIndexes(sequelize) {
   }
 }
 
-module.exports = { ensureRecordIndexes };
+module.exports = { ensureRecordIndexes, RECORD_INDEXES };

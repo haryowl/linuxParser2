@@ -10,6 +10,7 @@
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "migrate": "node scripts/migrate.js",
+    "create-indexes": "node scripts/createRecordsIndexes.js",
     "seed": "node scripts/seed.js",
     "clean": "node scripts/clean.js",
     "backup": "node scripts/backup.js"
