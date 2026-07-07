@@ -24,10 +24,10 @@ L.Icon.Default.mergeOptions({
   shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
 });
 
-const TrackingMap = ({ height = 400, showInfo = true, selectedImeis = [] }) => {
+const TrackingMap = ({ height = 400, showInfo = true, selectedImeis = [], seedDevices = [] }) => {
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error] = useState(null);
+  const [error, setError] = useState(null);
   const [mapCenter, setMapCenter] = useState([0, 0]);
   const [mapZoom, setMapZoom] = useState(2);
 
@@ -65,9 +65,13 @@ const TrackingMap = ({ height = 400, showInfo = true, selectedImeis = [] }) => {
 
   // Load initial device locations
   const loadDevicesWithLocations = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
     try {
       const response = await fetch(`${BASE_URL}/api/devices/locations`, {
-        credentials: 'include' // Include cookies in the request
+        credentials: 'include',
+        signal: controller.signal
       });
       
       if (response.ok) {
@@ -101,14 +105,29 @@ const TrackingMap = ({ height = 400, showInfo = true, selectedImeis = [] }) => {
       } else {
         console.error('Failed to fetch device locations:', response.status);
         setDevices([]);
+        setError('Failed to load device locations');
       }
     } catch (error) {
-      console.error('Error fetching device locations:', error);
-      setDevices([]);
+      if (error.name === 'AbortError') {
+        console.error('Device locations request timed out');
+        setError('Device locations timed out — map may be incomplete');
+      } else {
+        console.error('Error fetching device locations:', error);
+        setError('Failed to load device locations');
+      }
+      setDevices((prev) => {
+        if (prev.length > 0 || seedDevices.length === 0) {
+          return prev;
+        }
+        return selectedImeis.length > 0
+          ? seedDevices.filter((device) => selectedImeis.includes(device.imei))
+          : seedDevices;
+      });
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
-  }, [selectedImeis]);
+  }, [selectedImeis, seedDevices]);
 
   // WebSocket handler for real-time updates
   const handleWebSocketMessage = useCallback((message) => {
@@ -219,10 +238,17 @@ const TrackingMap = ({ height = 400, showInfo = true, selectedImeis = [] }) => {
   // Connect to WebSocket for real-time updates
   useWebSocket(null, handleWebSocketMessage);
 
-  // Load initial data
+  // Load initial data — show seed devices immediately, enrich with locations in background
   useEffect(() => {
+    if (seedDevices.length > 0) {
+      const seeded = selectedImeis.length > 0
+        ? seedDevices.filter((device) => selectedImeis.includes(device.imei))
+        : seedDevices;
+      setDevices(seeded);
+      setLoading(false);
+    }
     loadDevicesWithLocations();
-  }, [loadDevicesWithLocations]);
+  }, [loadDevicesWithLocations, seedDevices, selectedImeis]);
 
   // Refresh device locations periodically (every 30 seconds) as fallback
   useEffect(() => {
@@ -233,7 +259,7 @@ const TrackingMap = ({ height = 400, showInfo = true, selectedImeis = [] }) => {
     return () => clearInterval(interval);
   }, [loadDevicesWithLocations]);
 
-  if (loading) {
+  if (loading && devices.length === 0) {
     return (
       <Paper sx={{ p: 2, height }}>
         <Typography>Loading devices...</Typography>

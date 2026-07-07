@@ -5,11 +5,11 @@ const deviceManager = require('../services/deviceManager');
 const asyncHandler = require('../utils/asyncHandler'); // Import the asyncHandler middleware
 const tagDefinitions = require('../services/tagDefinitions');
 const TagParser = require('../services/tagParser');
-const { Record, Device, DeviceGroup, UserDeviceAccess, UserDeviceGroupAccess } = require('../models');
-const { Op } = require('sequelize');
+const { Record, Device, DeviceGroup, UserDeviceAccess, UserDeviceGroupAccess, sequelize } = require('../models');
+const { Op, QueryTypes } = require('sequelize');
 const { requireAuth } = require('./auth');
 const { checkDeviceAccess, filterDevicesByPermission } = require('../middleware/permissions');
-const { appendTimeGteFilter, findTrackingRecordsChronological, effectiveTimeOrderDesc } = require('../utils/recordTimeQuery');
+const { findTrackingRecordsChronological } = require('../utils/recordTimeQuery');
 const logger = require('../utils/logger');
 
 function normalizeCoordinateValue(value, maxAbs) {
@@ -88,6 +88,31 @@ function clearUserDeviceCache(userId) {
 function clearAllDeviceCache() {
     deviceCache.clear();
     console.log('🗑️ Cleared device cache for all users');
+}
+
+async function fetchLatestLocationsForImeis(deviceImeis) {
+    if (!deviceImeis.length) {
+        return [];
+    }
+
+    const placeholders = deviceImeis.map(() => '?').join(', ');
+    return sequelize.query(
+        `SELECT r."deviceImei", r.latitude, r.longitude, r.datetime, r.timestamp,
+                r.speed, r.direction, r.altitude, r.satellites, r.hdop
+         FROM "Records" r
+         INNER JOIN (
+             SELECT "deviceImei", MAX(id) AS maxId
+             FROM "Records"
+             WHERE "deviceImei" IN (${placeholders})
+               AND latitude IS NOT NULL
+               AND longitude IS NOT NULL
+             GROUP BY "deviceImei"
+         ) latest ON r.id = latest.maxId`,
+        {
+            replacements: deviceImeis,
+            type: QueryTypes.SELECT
+        }
+    );
 }
 
 // Get multi-device tracking data with color assignment and GPS filtering
@@ -353,14 +378,7 @@ router.get('/', requireAuth, filterDevicesByPermission, asyncHandler(async (req,
     if (req.user.role === 'admin') {
         logger.debug('Admin user - getting all devices');
         devices = await Device.findAll({
-            include: [{
-                model: require('../models').FieldMapping,
-                as: 'mappings',
-                where: { enabled: true },
-                required: false
-            }],
             order: [['lastSeen', 'DESC']],
-            // Add limit to prevent loading too many devices at once
             limit: 1000
         });
     } else {
@@ -416,14 +434,6 @@ router.get('/', requireAuth, filterDevicesByPermission, asyncHandler(async (req,
         // Get devices with single optimized query
         devices = await Device.findAll({
             where: whereCondition,
-            include: [
-                {
-                    model: require('../models').FieldMapping,
-                    as: 'mappings',
-                    where: { enabled: true },
-                    required: false
-                }
-            ],
             order: [['lastSeen', 'DESC']],
             limit: 1000
         });
@@ -572,30 +582,8 @@ router.get('/locations', requireAuth, filterDevicesByPermission, asyncHandler(as
         return res.json([]);
     }
     
-    // Get recent location data (last 24 hours for better coverage, but limit results)
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const recentRecords = await Record.findAll({
-        where: appendTimeGteFilter({
-            deviceImei: { [Op.in]: deviceImeis },
-            latitude: { [Op.ne]: null },
-            longitude: { [Op.ne]: null }
-        }, oneDayAgo),
-        attributes: [
-            'deviceImei',
-            'latitude',
-            'longitude', 
-            'datetime',
-            'timestamp',
-            'speed',
-            'direction',
-            'altitude',
-            'satellites',
-            'hdop'
-        ],
-        order: effectiveTimeOrderDesc(),
-        limit: 500, // Reduced limit for speed
-        raw: true
-    });
+    // Latest GPS per device (indexed MAX(id) — avoids 24h table scan)
+    const recentRecords = await fetchLatestLocationsForImeis(deviceImeis);
     
     // Create location map (take latest for each device)
     const locationMap = new Map();

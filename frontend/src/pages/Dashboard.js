@@ -392,7 +392,7 @@ const Dashboard = () => {
                 </Box>
               </Box>
               <Box sx={{ height: 'calc(100% - 60px)', borderRadius: 2, overflow: 'hidden' }}>
-                <TrackingMap selectedImeis={selectedDeviceImeis} />
+                <TrackingMap selectedImeis={selectedDeviceImeis} seedDevices={devices} />
               </Box>
             </CardContent>
           </Card>

@@ -423,7 +423,7 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
             lastUpdate: now.toISOString()
         };
 
-        cache.set(cacheKey, stats, 30000);
+        cache.set(cacheKey, stats, 60000);
         logger.debug(`Dashboard stats completed in ${Date.now() - requestStart}ms`, {
             userId: user.userId,
             role: user.role

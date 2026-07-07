@@ -5,7 +5,8 @@ const RECORD_INDEXES = [
   { name: 'records_device_imei_idx', fields: ['deviceImei'] },
   { name: 'records_datetime_idx', fields: ['datetime'] },
   { name: 'records_timestamp_idx', fields: ['timestamp'] },
-  { name: 'records_device_datetime_idx', fields: ['deviceImei', 'datetime'] }
+  { name: 'records_device_datetime_idx', fields: ['deviceImei', 'datetime'] },
+  { name: 'records_device_id_idx', fields: ['deviceImei', 'id'] }
 ];
 
 function buildCreateIndexSql(index) {

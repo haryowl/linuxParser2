@@ -63,3 +63,26 @@ Using **8081** for the UI works but shares the API process; always rebuild `fron
 ```bash
 cd /opt/linuxParser2 && git pull && cd frontend && rm -rf build && npm run build && cd .. && pm2 restart gali-parse
 ```
+
+## Fix slow / stuck dashboard after deploy
+
+If PM2 logs show `Global IMEI clear called` or the UI hangs on **Loading devices...**:
+
+1. Confirm you pulled the **latest** code (`git log -1 --oneline` should be recent).
+2. If your app lives under `/opt/linux` instead of `/opt/linuxParser2`, run `git pull` in **that** directory.
+3. Set in `env.production` (then restart PM2):
+
+```env
+ACK_AFTER_SAVE=false
+DASHBOARD_RECORDS_RANGE=1h
+DASHBOARD_RECORDS_LIMIT=100
+```
+
+4. Create DB indexes once (stop app first):
+
+```bash
+pm2 stop gali-parse
+cd /opt/linuxParser2/backend
+node scripts/createRecordsIndexes.js
+pm2 start gali-parse
+```

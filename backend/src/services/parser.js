@@ -179,6 +179,32 @@ class GalileoskyParser extends EventEmitter {
         await this.batchChain;
     }
 
+    async flushBufferWithTimeout(timeoutMs = 2000) {
+        const timeout = Math.max(500, timeoutMs);
+        let timer;
+        try {
+            await Promise.race([
+                this.flushBuffer(),
+                new Promise((_, reject) => {
+                    timer = setTimeout(() => reject(new Error('flushBuffer timeout')), timeout);
+                })
+            ]);
+        } catch (error) {
+            if (error.message === 'flushBuffer timeout') {
+                logger.warn('Record flush timed out before ACK — ACK sent to avoid device retry storm', {
+                    pendingRecords: this.recordBuffer.length,
+                    timeoutMs: timeout
+                });
+                return;
+            }
+            throw error;
+        } finally {
+            if (timer) {
+                clearTimeout(timer);
+            }
+        }
+    }
+
     getPendingTelemetryCount(connectionAddress) {
         return this.pendingTelemetryByConnection.get(connectionAddress)?.length || 0;
     }
@@ -273,7 +299,8 @@ class GalileoskyParser extends EventEmitter {
         }
 
         if (this.ackAfterSave !== false) {
-            await this.flushBuffer();
+            const timeoutMs = parseInt(process.env.FLUSH_ACK_TIMEOUT_MS, 10) || 2000;
+            await this.flushBufferWithTimeout(timeoutMs);
         }
     }
 
