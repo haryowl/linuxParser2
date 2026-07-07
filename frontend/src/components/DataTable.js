@@ -37,7 +37,7 @@ const DataTable = () => {
     const fetchRecords = async () => {
         try {
             const apiUrl = BASE_URL;
-            const response = await fetch(`${apiUrl}/api/records?range=1h&limit=100`);
+            const response = await fetch(`${apiUrl}/api/records?range=24h&limit=500`);
             if (!response.ok) {
                 throw new Error('Failed to fetch records');
             }

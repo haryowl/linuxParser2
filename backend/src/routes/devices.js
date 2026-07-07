@@ -9,6 +9,7 @@ const { Record, Device, DeviceGroup, UserDeviceAccess, UserDeviceGroupAccess } =
 const { Op } = require('sequelize');
 const { requireAuth } = require('./auth');
 const { checkDeviceAccess, filterDevicesByPermission } = require('../middleware/permissions');
+const { appendTimeGteFilter, findTrackingRecordsChronological } = require('../utils/recordTimeQuery');
 const logger = require('../utils/logger');
 
 function normalizeCoordinateValue(value, maxAbs) {
@@ -238,28 +239,28 @@ router.get('/multi-tracking', requireAuth, filterDevicesByPermission, asyncHandl
     }
     
     // OPTIMIZED: Get only recent location data (last 6 hours) with reduced limit
-    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000); // Reduced from 24 hours to 6 hours
-    const historicalRecords = await Record.findAll({
+    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
+    const historicalRecords = await findTrackingRecordsChronological(Record, {
         where: {
             deviceImei: { [Op.in]: deviceImeis },
             latitude: { [Op.ne]: null },
-            longitude: { [Op.ne]: null },
-            datetime: { [Op.gte]: sixHoursAgo }
+            longitude: { [Op.ne]: null }
         },
+        startDate: sixHoursAgo,
+        endDate: new Date(),
+        limit: 500,
         attributes: [
             'deviceImei',
             'latitude',
-            'longitude', 
+            'longitude',
             'datetime',
+            'timestamp',
             'speed',
             'direction',
             'altitude',
             'satellites',
             'hdop'
-        ],
-        order: [['datetime', 'ASC']], // Order by time for proper path drawing
-        limit: 500, // Reduced from 2000 to 500 for better performance
-        raw: true
+        ]
     });
     
     // Create location map (take latest for each device)
@@ -267,14 +268,15 @@ router.get('/multi-tracking', requireAuth, filterDevicesByPermission, asyncHandl
     const devicePaths = new Map(); // Store paths for each device
     
     // Group records by device
-    historicalRecords.forEach(record => {
+    historicalRecords.forEach((item) => {
+        const record = typeof item.toJSON === 'function' ? item.toJSON() : item;
         if (!devicePaths.has(record.deviceImei)) {
             devicePaths.set(record.deviceImei, []);
         }
         devicePaths.get(record.deviceImei).push({
             latitude: record.latitude,
             longitude: record.longitude,
-            timestamp: record.datetime,
+            timestamp: resolveLocationTimestamp(record.datetime, record.timestamp),
             speed: record.speed,
             direction: record.direction,
             altitude: record.altitude,
@@ -282,13 +284,15 @@ router.get('/multi-tracking', requireAuth, filterDevicesByPermission, asyncHandl
             hdop: record.hdop
         });
         
-        // Update latest location
-        if (!locationMap.has(record.deviceImei) || 
-            new Date(record.datetime) > new Date(locationMap.get(record.deviceImei).timestamp)) {
+        const recordTime = resolveLocationTimestamp(record.datetime, record.timestamp);
+        const recordTimeMs = recordTime ? new Date(recordTime).getTime() : 0;
+        if (!locationMap.has(record.deviceImei) ||
+            recordTimeMs > (locationMap.get(record.deviceImei).timeMs || 0)) {
             locationMap.set(record.deviceImei, {
                 latitude: record.latitude,
                 longitude: record.longitude,
-                timestamp: record.datetime,
+                timestamp: recordTime,
+                timeMs: recordTimeMs,
                 speed: record.speed,
                 direction: record.direction,
                 altitude: record.altitude,
@@ -571,12 +575,11 @@ router.get('/locations', requireAuth, filterDevicesByPermission, asyncHandler(as
     // Get recent location data (last 24 hours for better coverage, but limit results)
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const recentRecords = await Record.findAll({
-        where: {
+        where: appendTimeGteFilter({
             deviceImei: { [Op.in]: deviceImeis },
             latitude: { [Op.ne]: null },
-            longitude: { [Op.ne]: null },
-            datetime: { [Op.gte]: oneDayAgo }
-        },
+            longitude: { [Op.ne]: null }
+        }, oneDayAgo),
         attributes: [
             'deviceImei',
             'latitude',
@@ -589,7 +592,7 @@ router.get('/locations', requireAuth, filterDevicesByPermission, asyncHandler(as
             'satellites',
             'hdop'
         ],
-        order: [['datetime', 'DESC']],
+        order: [[require('sequelize').literal('COALESCE(datetime, timestamp)'), 'DESC']],
         limit: 500, // Reduced limit for speed
         raw: true
     });

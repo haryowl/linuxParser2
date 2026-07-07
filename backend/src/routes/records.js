@@ -9,9 +9,12 @@ const ExcelJS = require('exceljs');
 const { requireAuth } = require('./auth');
 const { filterDevicesByPermission } = require('../middleware/permissions');
 const logger = require('../utils/logger');
+const { appendTimeRangeFilter, effectiveTimeOrderDesc } = require('../utils/recordTimeQuery');
 
 const EXPORT_MAX_ROWS = 50000;
 const PREVIEW_MAX_ROWS = 1000;
+const DEFAULT_RECORDS_RANGE = process.env.DASHBOARD_RECORDS_RANGE || '24h';
+const DEFAULT_RECORDS_LIMIT = Number.parseInt(process.env.DASHBOARD_RECORDS_LIMIT, 10) || 500;
 
 function buildMergeKey(record) {
     const deviceImei = record.deviceImei || '';
@@ -135,7 +138,7 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
         const requestStart = Date.now();
         logger.debug('GET /api/records - Starting request', { username: req.user.username });
         
-        let { startDate, endDate, limit = 100, range, imeis, offset: offsetParam, paginated } = req.query;
+        let { startDate, endDate, limit = DEFAULT_RECORDS_LIMIT, range, imeis, offset: offsetParam, paginated } = req.query;
         const isPaginated = paginated === '1' || paginated === 'true';
         const queryOffset = Math.max(0, parseInt(offsetParam, 10) || 0);
         const where = {};
@@ -157,8 +160,7 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
         
         // Better defaults to prevent massive queries
         if (!range && !startDate && !endDate) {
-            // Default to last 1h instead of 24h for better performance
-            range = '1h';
+            range = DEFAULT_RECORDS_RANGE;
         }
         
         if (range === '24h') {
@@ -167,16 +169,16 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
         } else if (range === '1h') {
             startDate = new Date(now.getTime() - 60 * 60 * 1000);
             endDate = now;
-        } else if (range === 'all') {
-            // For 'all' requests, limit to last 7 days to prevent timeout
+        } else if (range === '7d') {
             startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            endDate = now;
+        } else if (range === 'all') {
+            startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
             endDate = now;
         }
         
         if (startDate && endDate) {
-            where.datetime = {
-                [Op.between]: [new Date(startDate), new Date(endDate)]
-            };
+            Object.assign(where, appendTimeRangeFilter({}, startDate, endDate));
         }
         
         // Add IMEI filtering if provided
@@ -224,7 +226,7 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
 
         const records = await Record.findAll({
             where,
-            order: [['datetime', 'DESC']],
+            order: effectiveTimeOrderDesc(),
             limit: queryLimit,
             offset: isPaginated ? queryOffset : 0,
             attributes: availableAttributes
@@ -285,15 +287,13 @@ router.get('/device/:imei', async (req, res) => {
         const where = { deviceImei: imei };
         
         if (startDate && endDate) {
-            where.datetime = {
-                [Op.between]: [new Date(startDate), new Date(endDate)]
-            };
+            Object.assign(where, appendTimeRangeFilter({}, startDate, endDate));
         }
         
         const records = await Record.findAll({
             where,
-            order: [['datetime', 'DESC']],
-            limit: parseInt(limit)
+            order: effectiveTimeOrderDesc(),
+            limit: parseInt(limit, 10)
         });
         
         res.json(records);
@@ -314,9 +314,7 @@ router.post('/export', requireAuth, filterDevicesByPermission, async (req, res) 
         
         // Use DATETIME field for time filtering instead of TIMESTAMP
         if (startDate && endDate) {
-            where.datetime = {
-                [Op.between]: [new Date(startDate), new Date(endDate)]
-            };
+            Object.assign(where, appendTimeRangeFilter({}, startDate, endDate));
         }
         
         // Add IMEI filtering if provided, respecting user permissions
@@ -348,7 +346,7 @@ router.post('/export', requireAuth, filterDevicesByPermission, async (req, res) 
         const records = await Record.findAll({
             where,
             attributes: allFields,
-            order: [['datetime', 'DESC']],
+            order: effectiveTimeOrderDesc(),
             limit: EXPORT_MAX_ROWS
         });
 
@@ -502,9 +500,7 @@ router.post('/export-sm', requireAuth, filterDevicesByPermission, async (req, re
         
         // Use DATETIME field for time filtering
         if (startDate && endDate) {
-            where.datetime = {
-                [Op.between]: [new Date(startDate), new Date(endDate)]
-            };
+            Object.assign(where, appendTimeRangeFilter({}, startDate, endDate));
         }
         
         // Add IMEI filtering if provided - but respect user permissions
@@ -540,7 +536,7 @@ router.post('/export-sm', requireAuth, filterDevicesByPermission, async (req, re
         const records = await Record.findAll({
             where,
             attributes: allFields,
-            order: [['datetime', 'DESC']],
+            order: effectiveTimeOrderDesc(),
             limit: EXPORT_MAX_ROWS
         });
 

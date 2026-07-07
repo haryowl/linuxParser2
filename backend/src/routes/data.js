@@ -10,6 +10,7 @@ const { checkDeviceAccess, filterDevicesByPermission } = require('../middleware/
 const { getAvailableColumns, columnSets } = require('../utils/columnHelper');
 const { resolveAccessibleDeviceImeis, canAccessDeviceImei } = require('../utils/accessibleDevices');
 const { userHasMenuAccess } = require('../middleware/permissions');
+const { appendTimeRangeFilter, effectiveTimeOrderAsc, findTrackingRecordsChronological } = require('../utils/recordTimeQuery');
 const logger = require('../utils/logger');
 
 const TRACKING_MAX_POINTS = Number.parseInt(process.env.TRACKING_MAX_POINTS, 10) || 15000;
@@ -32,21 +33,14 @@ router.get('/:deviceId/tracking', requireAuth, checkDeviceAccess, asyncHandler(a
         longitude: { [Op.ne]: null }
     };
     
-    if (startDate && endDate) {
-        // Use device datetime field for filtering instead of server timestamp
-        where.datetime = {
-            [Op.between]: [new Date(startDate), new Date(endDate)]
-        };
-    }
-    
-    // Get available columns for tracking data
     const availableColumns = getAvailableColumns(columnSets.tracking, Record);
     
-    const trackingData = await Record.findAll({
+    const trackingData = await findTrackingRecordsChronological(Record, {
         where,
-        attributes: availableColumns,
-        order: [['datetime', 'ASC']],
-        limit: TRACKING_MAX_POINTS
+        startDate,
+        endDate,
+        limit: TRACKING_MAX_POINTS,
+        attributes: availableColumns
     });
 
     if (trackingData.length === TRACKING_MAX_POINTS) {
@@ -66,20 +60,16 @@ router.get('/:deviceId/export', requireAuth, checkDeviceAccess, asyncHandler(asy
         deviceImei: deviceId
     };
     
-    if (startDate && endDate) {
-        // Use device datetime field for filtering instead of server timestamp
-        where.datetime = {
-            [Op.between]: [new Date(startDate), new Date(endDate)]
-        };
-    }
-    
-    // Get available columns for export data
     const availableColumns = getAvailableColumns(columnSets.export, Record);
+
+    if (startDate && endDate) {
+        Object.assign(where, appendTimeRangeFilter({}, startDate, endDate));
+    }
     
     const exportData = await Record.findAll({
         where,
         attributes: availableColumns,
-        order: [['datetime', 'ASC']] // Order by device datetime instead of server timestamp
+        order: effectiveTimeOrderAsc()
     });
     
     res.json(exportData);
@@ -105,14 +95,11 @@ router.get('/imei/:deviceImei/tracking', requireAuth, asyncHandler(async (req, r
         longitude: { [Op.ne]: null }
     };
 
-    if (startDate && endDate) {
-        where.datetime = {
-            [Op.between]: [new Date(startDate), new Date(endDate)]
-        };
-    }
-
-    const trackingData = await Record.findAll({
+    const trackingData = await findTrackingRecordsChronological(Record, {
         where,
+        startDate,
+        endDate,
+        limit: TRACKING_MAX_POINTS,
         attributes: [
             'deviceImei',
             'latitude',
@@ -124,9 +111,7 @@ router.get('/imei/:deviceImei/tracking', requireAuth, asyncHandler(async (req, r
             'altitude',
             'satellites',
             'hdop'
-        ],
-        order: [['datetime', 'ASC']],
-        limit: TRACKING_MAX_POINTS
+        ]
     });
 
     if (trackingData.length === TRACKING_MAX_POINTS) {

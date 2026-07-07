@@ -99,7 +99,7 @@ export function DataProvider({ children }) {
 
   const fetchRecords = useCallback(async () => {
     try {
-      const response = await fetch(`${BASE_URL}/api/records?range=1h&limit=100`, {
+      const response = await fetch(`${BASE_URL}/api/records?range=24h&limit=500`, {
         credentials: 'include'
       });
 

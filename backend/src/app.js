@@ -452,8 +452,8 @@ const tcpServer = net.createServer((socket) => {
         bufferStats: getBufferStats()
     });
 
-    // Clear per-connection parser state for new TCP sessions
-    parser.clearConnectionState(clientAddress);
+    // Reset session and adopt any IP-held pending telemetry from a prior disconnect
+    parser.resetConnectionSession(clientAddress);
 
     // Set socket options to prevent hanging connections
     socket.setKeepAlive(true, 60000); // 60 seconds
@@ -475,7 +475,7 @@ const tcpServer = net.createServer((socket) => {
         });
         // Force close the socket on error
         socket.destroy();
-        parser.clearConnectionState(clientAddress);
+        parser.teardownConnection(clientAddress);
         connectionRegistry.removeConnection(clientAddress);
     });
 
@@ -501,7 +501,7 @@ const tcpServer = net.createServer((socket) => {
         });
         
         // Clear per-connection parser state on disconnect
-        parser.clearConnectionState(clientAddress);
+        parser.teardownConnection(clientAddress);
         connectionRegistry.removeConnection(clientAddress);
     });
 
@@ -511,7 +511,7 @@ const tcpServer = net.createServer((socket) => {
             timestamp: new Date().toISOString()
         });
         socket.destroy();
-        parser.clearConnectionState(clientAddress);
+        parser.teardownConnection(clientAddress);
         connectionRegistry.removeConnection(clientAddress);
     });
 });

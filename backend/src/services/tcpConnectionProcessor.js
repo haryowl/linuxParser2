@@ -1,15 +1,19 @@
+const config = require('../config');
 const logger = require('../utils/logger');
 
-function buildConfirmation(packet) {
+const maxPacketSize = config.parser.maxPacketSize || 1024;
+
+function buildConfirmation(packet, ackHeader = 0x02) {
     const packetChecksum = packet.readUInt16LE(packet.length - 2);
-    return Buffer.from([0x02, packetChecksum & 0xff, (packetChecksum >> 8) & 0xff]);
+    return Buffer.from([ackHeader, packetChecksum & 0xff, (packetChecksum >> 8) & 0xff]);
 }
 
-function sendConfirmation(socket, packet, clientAddress) {
-    const confirmation = buildConfirmation(packet);
+function sendConfirmation(socket, packet, clientAddress, ackHeader = 0x02) {
+    const confirmation = buildConfirmation(packet, ackHeader);
     socket.write(confirmation);
     logger.info('Confirmation sent', {
         address: clientAddress,
+        ackHeader: `0x${ackHeader.toString(16).padStart(2, '0')}`,
         hex: confirmation.toString('hex').toUpperCase(),
         checksum: `0x${confirmation.slice(1).toString('hex').toUpperCase()}`,
         packetLength: packet.length - 5,
@@ -35,6 +39,21 @@ function extractPackets(state, incomingData) {
         const actualLength = rawLength & 0x7fff;
         const totalLength = actualLength + 3;
 
+        if (actualLength > maxPacketSize) {
+            logger.error('Packet exceeds MAX_PACKET_SIZE, discarding frame without ACK', {
+                packetType: `0x${packetType.toString(16).padStart(2, '0')}`,
+                actualLength,
+                maxPacketSize
+            });
+            if (state.buffer.length < totalLength + 2) {
+                state.unsentData = Buffer.from(state.buffer);
+                state.buffer = Buffer.alloc(0);
+                break;
+            }
+            state.buffer = state.buffer.slice(totalLength + 2);
+            continue;
+        }
+
         if (state.buffer.length < totalLength + 2) {
             state.unsentData = Buffer.from(state.buffer);
             state.buffer = Buffer.alloc(0);
@@ -45,7 +64,7 @@ function extractPackets(state, incomingData) {
         state.buffer = state.buffer.slice(totalLength + 2);
 
         const isIgnorablePacket = packetType === 0x15;
-        const isExtensionPacket = packetType !== 0x01 && !isIgnorablePacket;
+        const isExtensionPacket = packetType !== 0x01 && packetType !== 0x08 && packetType !== 0x07 && !isIgnorablePacket;
 
         logger.debug('Packet framed', {
             type: `0x${packetType.toString(16).padStart(2, '0')}`,
@@ -74,7 +93,8 @@ async function processPacket(packet, socket, clientAddress, parser, connectionRe
 
     await parser.ensurePacketTelemetryPersisted(clientAddress);
 
-    sendConfirmation(socket, packet, clientAddress);
+    const ackHeader = parsedData?.ackHeader || (packet.readUInt8(0) === 0x07 ? 0x07 : 0x02);
+    sendConfirmation(socket, packet, clientAddress, ackHeader);
 
     logger.info('Packet parsed successfully', {
         address: clientAddress,
@@ -83,6 +103,7 @@ async function processPacket(packet, socket, clientAddress, parser, connectionRe
         queuedTelemetry: parsedData?.queuedTelemetry || 0,
         flushedPendingTelemetry: parsedData?.flushedPendingTelemetry || 0,
         packetType: parsedData?.type || parsedData?.packetType || null,
+        ackHeader: `0x${ackHeader.toString(16).padStart(2, '0')}`,
         timestamp: new Date().toISOString()
     });
 

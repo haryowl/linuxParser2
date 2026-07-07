@@ -10,6 +10,7 @@ const TagParser = require('./tagParser');
 const { isNewRecordStart } = require('./galileoskyRecordStream');
 const { GalileoskyBitBuffer, popcount } = require('./galileoskyBitBuffer');
 const { decryptPacketBody } = require('./galileoskyXtea');
+const { extractClientIp } = require('../utils/clientAddress');
 const { Record, Device } = require('../models');
 
 class GalileoskyParser extends EventEmitter {
@@ -23,6 +24,7 @@ class GalileoskyParser extends EventEmitter {
         this.ackAfterSave = config.parser.ackAfterSave;
         this.maxPendingTelemetryPerConnection = parseInt(process.env.MAX_PENDING_TELEMETRY, 10) || 200;
         this.pendingTelemetryByConnection = new Map();
+        this.pendingTelemetryByClientIp = new Map();
         
         // Batch processing configuration
         this.batchSize = 50; // Records per batch
@@ -256,17 +258,72 @@ class GalileoskyParser extends EventEmitter {
         }
     }
 
-    clearConnectionState(connectionAddress) {
-        const pending = this.getPendingTelemetryCount(connectionAddress);
-        if (pending > 0) {
-            logger.warn('Discarding pending telemetry on disconnect', {
-                connectionAddress,
-                pending,
-                timestamp: new Date().toISOString()
+    movePendingToClientIp(connectionAddress) {
+        const pending = this.pendingTelemetryByConnection.get(connectionAddress);
+        if (!pending?.length) {
+            return 0;
+        }
+
+        const clientIp = extractClientIp(connectionAddress);
+        const ipQueue = this.pendingTelemetryByClientIp.get(clientIp) || [];
+        ipQueue.push(...pending.splice(0));
+        const maxIpQueue = this.maxPendingTelemetryPerConnection * 2;
+        if (ipQueue.length > maxIpQueue) {
+            ipQueue.splice(0, ipQueue.length - maxIpQueue);
+            logger.warn('Trimmed IP pending telemetry queue to max size', {
+                clientIp,
+                maxIpQueue
             });
         }
+
+        this.pendingTelemetryByClientIp.set(clientIp, ipQueue);
         this.pendingTelemetryByConnection.delete(connectionAddress);
+
+        logger.warn('Moved pending telemetry to client IP hold queue on disconnect', {
+            connectionAddress,
+            clientIp,
+            moved: ipQueue.length,
+            timestamp: new Date().toISOString()
+        });
+
+        return ipQueue.length;
+    }
+
+    adoptIpPendingForConnection(connectionAddress) {
+        const clientIp = extractClientIp(connectionAddress);
+        const ipQueue = this.pendingTelemetryByClientIp.get(clientIp);
+        if (!ipQueue?.length) {
+            return 0;
+        }
+
+        const connQueue = this.pendingTelemetryByConnection.get(connectionAddress) || [];
+        connQueue.push(...ipQueue.splice(0));
+        this.pendingTelemetryByClientIp.delete(clientIp);
+        this.pendingTelemetryByConnection.set(connectionAddress, connQueue);
+
+        logger.info('Adopted IP-held pending telemetry for new connection', {
+            connectionAddress,
+            clientIp,
+            adopted: connQueue.length,
+            timestamp: new Date().toISOString()
+        });
+
+        return connQueue.length;
+    }
+
+    resetConnectionSession(connectionAddress) {
         this.clearIMEI(connectionAddress);
+        this.pendingTelemetryByConnection.delete(connectionAddress);
+        return this.adoptIpPendingForConnection(connectionAddress);
+    }
+
+    teardownConnection(connectionAddress) {
+        this.movePendingToClientIp(connectionAddress);
+        this.clearIMEI(connectionAddress);
+    }
+
+    clearConnectionState(connectionAddress) {
+        this.teardownConnection(connectionAddress);
     }
 
     getCommandReply(record, connectionAddress) {
@@ -460,6 +517,12 @@ class GalileoskyParser extends EventEmitter {
                 result.actualLength = actualLength;
                 result.rawLength = rawLength;
                 return result;
+            } else if (PacketTypeHandler.isPhotoPacket(header)) {
+                const result = await this.parsePhotoPacket(workBuffer, connectionAddress);
+                result.hasUnsentData = hasUnsentData;
+                result.actualLength = actualLength;
+                result.rawLength = rawLength;
+                return result;
             } else if (PacketTypeHandler.isIgnorablePacket(header)) {
                 // This is an ignorable packet, just needs confirmation
                 return await this.parseIgnorablePacket(workBuffer);
@@ -504,6 +567,10 @@ class GalileoskyParser extends EventEmitter {
         
         // Extract 15 low-order bits for packet length
         const actualLength = rawLength & 0x7FFF;
+
+        if (actualLength > this.maxPacketSize) {
+            throw new Error(`Packet data length ${actualLength} exceeds MAX_PACKET_SIZE ${this.maxPacketSize}`);
+        }
 
         // Check if we have the complete packet (HEAD + LENGTH + DATA + CRC)
         const expectedLength = actualLength + 3;  // Header (1) + Length (2) + Data
@@ -1403,6 +1470,10 @@ class GalileoskyParser extends EventEmitter {
         // Extract 15 low-order bits for packet length
         const actualLength = rawLength & 0x7FFF;
 
+        if (actualLength > this.maxPacketSize) {
+            throw new Error(`Packet data length ${actualLength} exceeds MAX_PACKET_SIZE ${this.maxPacketSize}`);
+        }
+
         // Check if we have the complete packet (HEAD + LENGTH + DATA + CRC)
         const expectedLength = actualLength + 3;  // Header (1) + Length (2) + Data
         if (buffer.length < expectedLength + 2) {  // +2 for CRC
@@ -1593,6 +1664,34 @@ class GalileoskyParser extends EventEmitter {
             logger.error('Error parsing type 33 packet:', error);
             throw error;
         }
+    }
+
+    /**
+     * Parse photo packet (HEAD 0x07). Image chunks are acknowledged with 0x07 + CRC.
+     */
+    async parsePhotoPacket(buffer, connectionAddress = null) {
+        const actualLength = buffer.readUInt16LE(1) & 0x7fff;
+        const partNumber = buffer.length > 3 ? buffer.readUInt8(3) : 0;
+        const payloadLength = Math.max(0, actualLength - 1);
+
+        logger.info('Photo packet received', {
+            connectionAddress,
+            partNumber,
+            payloadLength,
+            packetLength: actualLength,
+            timestamp: new Date().toISOString()
+        });
+
+        return {
+            type: 'photo',
+            header: 0x07,
+            length: actualLength,
+            partNumber,
+            payloadLength,
+            records: [],
+            commandReplies: 0,
+            ackHeader: 0x07
+        };
     }
 
     /**

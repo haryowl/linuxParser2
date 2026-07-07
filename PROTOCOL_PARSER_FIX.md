@@ -65,7 +65,17 @@ MAX_PENDING_TELEMETRY=200
 GALILEOSKY_XTEA_KEY=   # 16-byte ASCII or 32 hex chars, from device configurator
 ```
 
-## Phase 3 (2026-07-07) — IMEI-deferred queue + strict DB save
+## Phase 4 (2026-07-07) — apparent loss fixes + remaining backend edges
+
+| Area | Change |
+|------|--------|
+| **Tracking queries** | Newest `TRACKING_MAX_POINTS` kept (`DESC` fetch, chronological response) |
+| **Date filters** | `COALESCE(datetime, timestamp)` in records/tracking/export queries |
+| **Dashboard defaults** | API default `24h` / `500` rows (`DASHBOARD_RECORDS_RANGE`, `DASHBOARD_RECORDS_LIMIT`) |
+| **Frontend** | DataContext + DataTable use `range=24h&limit=500` |
+| **IP pending queue** | Pending telemetry survives disconnect via client-IP hold queue |
+| **MAX_PACKET_SIZE** | Enforced in TCP framing and `validatePacket()` |
+| **Photo packets** | `0x07` parsed with `0x07` ACK header |
 
 | Area | Change |
 |------|--------|
