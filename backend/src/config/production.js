@@ -29,7 +29,7 @@ module.exports = {
         datePattern: process.env.LOG_DATE_PATTERN || 'YYYY-MM-DD'
     },
     parser: {
-        validateChecksum: process.env.VALIDATE_CHECKSUM === 'true' || true,
+        validateChecksum: process.env.VALIDATE_CHECKSUM !== 'false',
         maxPacketSize: parseInt(process.env.MAX_PACKET_SIZE) || 1024,
         timeout: parseInt(process.env.PARSER_TIMEOUT) || 5000,
         retryAttempts: parseInt(process.env.PARSER_RETRY_ATTEMPTS) || 3

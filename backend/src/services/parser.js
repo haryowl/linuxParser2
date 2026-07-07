@@ -7,6 +7,7 @@ const logger = require('../utils/logger');
 const config = require('../config');
 const PacketTypeHandler = require('./packetTypeHandler');
 const TagParser = require('./tagParser');
+const { isNewRecordStart } = require('./galileoskyRecordStream');
 const { Record, Device } = require('../models');
 
 class GalileoskyParser extends EventEmitter {
@@ -314,17 +315,24 @@ class GalileoskyParser extends EventEmitter {
             } else if (PacketTypeHandler.isIgnorablePacket(header)) {
                 // This is an ignorable packet, just needs confirmation
                 return await this.parseIgnorablePacket(buffer);
+            } else if (PacketTypeHandler.isExtensionPacket(header)) {
+                // Extension packets carry the same tag stream as main packets (different HEAD byte)
+                const result = await this.parseMainPacket(buffer, 0, actualLength, connectionAddress);
+                result.packetType = 'extension';
+                result.extensionHeader = header;
+                result.hasUnsentData = hasUnsentData;
+                result.actualLength = actualLength;
+                result.rawLength = rawLength;
+                return result;
             } else {
-                // This is an extension packet
-                return {
-                    type: 'extension',
-                    header: header,
-                    length: buffer.readUInt16LE(1),
-                    hasUnsentData,
-                    actualLength,
-                    rawLength,
-                    raw: buffer
-                };
+                logger.warn('Unknown packet header, attempting tag-stream parse', {
+                    header: `0x${header.toString(16).padStart(2, '0')}`,
+                    actualLength
+                });
+                const result = await this.parseMainPacket(buffer, 0, actualLength, connectionAddress);
+                result.packetType = 'unknown';
+                result.unknownHeader = header;
+                return result;
             }
         } catch (error) {
             logger.error('Parsing error:', error);
@@ -355,16 +363,14 @@ class GalileoskyParser extends EventEmitter {
             throw new Error('Incomplete packet');
         }
 
-        // Temporarily disable CRC validation for testing
-        /*
-        // Verify checksum
-        const calculatedChecksum = this.calculateCRC16(buffer.slice(0, expectedLength));
-        const receivedChecksum = buffer.readUInt16LE(expectedLength);
+        if (this.validateChecksum !== false) {
+            const calculatedChecksum = this.calculateCRC16(buffer.slice(0, expectedLength));
+            const receivedChecksum = buffer.readUInt16LE(expectedLength);
 
-        if (calculatedChecksum !== receivedChecksum) {
-            throw new Error('Checksum mismatch');
+            if (calculatedChecksum !== receivedChecksum) {
+                throw new Error('Checksum mismatch');
+            }
         }
-        */
 
         return {
             hasUnsentData,
@@ -392,7 +398,68 @@ class GalileoskyParser extends EventEmitter {
     }
 
     /**
-     * Parse main packet
+     * Parse all records in a packet data section using sequential tag parsing.
+     */
+    parseAllRecords(buffer, startOffset, endOffset, connectionAddress = null) {
+        const records = [];
+        let offset = startOffset;
+        let guard = 0;
+        const maxIterations = 5000;
+
+        while (offset < endOffset && guard++ < maxIterations) {
+            const before = offset;
+            const record = this.parseRecord(buffer, offset, endOffset, connectionAddress);
+            const nextOffset = Number.isInteger(record.nextOffset) ? record.nextOffset : endOffset;
+
+            if (Object.keys(record.tags).length > 0) {
+                records.push(record);
+            }
+
+            if (nextOffset <= before) {
+                offset = before + 1;
+            } else {
+                offset = nextOffset;
+            }
+        }
+
+        return records;
+    }
+
+    async persistParsedRecord(record, connectionAddress, result) {
+        if (Object.keys(record.tags).length === 0) {
+            return;
+        }
+
+        if (record.isCommandReply) {
+            const reply = this.getCommandReply(record, connectionAddress);
+            if (reply) {
+                this.emit('commandReply', reply);
+            }
+            return;
+        }
+
+        result.records.push(record);
+
+        const imei = this.getIMEI(connectionAddress);
+        if (imei) {
+            await this.saveRecordToDatabase(record, imei);
+            this.emit('recordStored', {
+                imei,
+                timestamp: new Date(),
+                tags: record.tags,
+                recordNumber: record.tags['0x10']?.value
+            });
+        } else {
+            logger.warn('No IMEI available for this connection, skipping record save', {
+                connectionAddress,
+                recordTags: Object.keys(record.tags),
+                timestamp: new Date().toISOString()
+            });
+        }
+    }
+
+    /**
+     * Parse main packet (HEAD 0x01) or extension packet data section (tag stream).
      */
     async parseMainPacket(buffer, offset = 0, actualLength, connectionAddress = null) {
         try {
@@ -403,248 +470,24 @@ class GalileoskyParser extends EventEmitter {
                 records: []
             };
 
-            let currentOffset = offset + 3;
-            const endOffset = offset + 3 + actualLength;
+            const dataStart = offset + 3;
+            const dataEnd = offset + 3 + actualLength;
+            const records = this.parseAllRecords(buffer, dataStart, dataEnd, connectionAddress);
 
-            if (actualLength < 32) {
-                // Single record for small packets
-                const record = this.parseRecord(buffer, currentOffset, endOffset, connectionAddress);
-                if (Object.keys(record.tags).length > 0) {
-                    if (record.isCommandReply) {
-                        const reply = this.getCommandReply(record, connectionAddress);
-                        if (reply) {
-                            this.emit('commandReply', reply);
-                        }
-                        return result;
-                    }
-                    result.records.push(record);
-                    // Save record if IMEI is available for this connection
-                    const imei = this.getIMEI(connectionAddress);
-                    if (imei) {
-                        await this.saveRecordToDatabase(record, imei);
-                        // Emit recordStored event
-                        this.emit('recordStored', {
-                            imei: imei,
-                            timestamp: new Date(),
-                            tags: record.tags,
-                            recordNumber: record.tags['0x10']?.value
-                        });
-                    } else {
-                        logger.warn('No IMEI available for this connection, skipping record save', {
-                            connectionAddress,
-                            recordTags: Object.keys(record.tags),
-                            timestamp: new Date().toISOString()
-                        });
-                    }
-                }
-            } else {
-                // Command reply packets start with tag 0x03 (IMEI) and should be parsed as a single record
-                if (buffer.readUInt8(currentOffset) === 0x03) {
-                    const record = this.parseRecord(buffer, currentOffset, endOffset, connectionAddress);
-                    if (Object.keys(record.tags).length > 0 && record.isCommandReply) {
-                        const reply = this.getCommandReply(record, connectionAddress);
-                        if (reply) {
-                            this.emit('commandReply', reply);
-                        }
-                    }
-                    return result;
-                }
+            logger.info('Packet records parsed', {
+                connectionAddress,
+                packetLength: actualLength,
+                recordsFound: records.length,
+                timestamp: new Date().toISOString()
+            });
 
-                // For packets >= 32 bytes, detect multiple records by looking for record start markers
-                // Different devices use different formats:
-                // - Some start with 0x10 (Archive Record Number) followed by 0x20 (Date Time)
-                // - Others start directly with 0x20 (Date Time)
-                let hasMultipleRecords = false;
-                let recordBoundaries = [];
-                let searchOffset = currentOffset;
-                
-                // First, try to detect if records start with 0x10 (Archive Record Number)
-                let recordStartsWith10 = false;
-                while (searchOffset < endOffset - 2) {
-                    if (buffer.readUInt8(searchOffset) === 0x10) {
-                        recordStartsWith10 = true;
-                        break;
-                    }
-                    searchOffset++;
-                }
-
-                // Log the detected format
-                logger.info('Packet format detection:', {
-                    connectionAddress,
-                    packetLength: actualLength,
-                    recordStartsWith10: recordStartsWith10,
-                    format: recordStartsWith10 ? '0x10-based' : '0x20-based',
-                    timestamp: new Date().toISOString()
-                });
-                
-                // Reset search offset
-                searchOffset = currentOffset;
-                
-                if (recordStartsWith10) {
-                    const isRecordStart = (offset) => {
-                        if (offset + 3 >= endOffset) {
-                            return false;
-                        }
-                        return buffer.readUInt8(offset) === 0x10 && buffer.readUInt8(offset + 3) === 0x20;
-                    };
-
-                    // Records start with 0x10 tag followed by 0x20 - find valid record starts
-                    let recordStart = currentOffset;
-                    while (recordStart < endOffset - 3) {
-                        if (!isRecordStart(recordStart)) {
-                            recordStart++;
-                            continue;
-                        }
-
-                        // Find the end of this record (next valid record start or end of packet)
-                        let recordEnd = recordStart + 1;
-                        while (recordEnd < endOffset) {
-                            if (recordEnd > recordStart + 3 && isRecordStart(recordEnd)) {
-                                break;
-                            }
-                            recordEnd++;
-                        }
-
-                        recordBoundaries.push({ start: recordStart, end: recordEnd });
-                        recordStart = recordEnd;
-                    }
-                } else {
-                    // Records start with 0x20 tag - find all 0x20 occurrences
-                    let recordStart = currentOffset;
-                    while (recordStart < endOffset - 2) {
-                        if (buffer.readUInt8(recordStart) !== 0x20) {
-                            recordStart++;
-                            continue;
-                        }
-                        
-                        // Find the end of this record (next 0x20 tag or end of packet)
-                        let recordEnd = recordStart + 1;
-                        while (recordEnd < endOffset) {
-                            if (buffer.readUInt8(recordEnd) === 0x20 && recordEnd > recordStart + 1) {
-                                break;
-                            }
-                            recordEnd++;
-                        }
-                        
-                        recordBoundaries.push({ start: recordStart, end: recordEnd });
-                        recordStart = recordEnd;
-                    }
-                }
-                
-                hasMultipleRecords = recordBoundaries.length > 1;
-
-                if (hasMultipleRecords) {
-                    // Log the found record boundaries for debugging
-                    logger.info('Multi-record packet detected:', {
-                        connectionAddress,
-                        totalRecords: recordBoundaries.length,
-                        recordFormat: recordStartsWith10 ? '0x10-based' : '0x20-based',
-                        boundaries: recordBoundaries.map((b, i) => ({
-                            recordIndex: i,
-                            start: b.start,
-                            end: b.end,
-                            length: b.end - b.start
-                        })),
-                        timestamp: new Date().toISOString()
-                    });
-
-                    // Process all records in parallel
-                    const recordPromises = recordBoundaries.map(async (boundary) => {
-                        return this.parseRecord(buffer, boundary.start, boundary.end, connectionAddress);
-                    });
-
-                    const parsedRecords = await Promise.all(recordPromises);
-                    
-                    // Filter out records with no tags and save them
-                    let savedCount = 0;
-                    for (const record of parsedRecords) {
-                        if (Object.keys(record.tags).length > 0) {
-                            result.records.push(record);
-                            if (record.isCommandReply) {
-                                const reply = this.getCommandReply(record, connectionAddress);
-                                if (reply) {
-                                    this.emit('commandReply', reply);
-                                }
-                                continue;
-                            }
-                            // Save record if IMEI is available for this connection
-                            const imei = this.getIMEI(connectionAddress);
-                            if (imei) {
-                                await this.saveRecordToDatabase(record, imei);
-                                savedCount++;
-                                // Emit recordStored event
-                                this.emit('recordStored', {
-                                    imei: imei,
-                                    timestamp: new Date(),
-                                    tags: record.tags,
-                                    recordNumber: record.tags['0x10']?.value
-                                });
-                            } else {
-                                logger.warn('No IMEI available for this connection, skipping record save', {
-                                    connectionAddress,
-                                    recordTags: Object.keys(record.tags),
-                                    timestamp: new Date().toISOString()
-                                });
-                            }
-                        }
-                    }
-
-                    // Log the processing results
-                    logger.info('Multi-record processing completed:', {
-                        connectionAddress,
-                        totalRecordsFound: recordBoundaries.length,
-                        recordsWithTags: parsedRecords.filter(r => Object.keys(r.tags).length > 0).length,
-                        recordsSaved: savedCount,
-                        timestamp: new Date().toISOString()
-                    });
-                } else {
-                    // Single record - parse directly from currentOffset
-                    logger.info('Single record packet detected:', {
-                        connectionAddress,
-                        recordLength: endOffset - currentOffset,
-                        timestamp: new Date().toISOString()
-                    });
-                    
-                    const record = this.parseRecord(buffer, currentOffset, endOffset, connectionAddress);
-                    if (Object.keys(record.tags).length > 0) {
-                        result.records.push(record);
-                        if (record.isCommandReply) {
-                            const reply = this.getCommandReply(record, connectionAddress);
-                            if (reply) {
-                                this.emit('commandReply', reply);
-                            }
-                            return result;
-                        }
-                        // Save record if IMEI is available for this connection
-                        const imei = this.getIMEI(connectionAddress);
-                        if (imei) {
-                            await this.saveRecordToDatabase(record, imei);
-                            // Emit recordStored event
-                            this.emit('recordStored', {
-                                imei: imei,
-                                timestamp: new Date(),
-                                tags: record.tags,
-                                recordNumber: record.tags['0x10']?.value
-                            });
-                        } else {
-                            logger.warn('No IMEI available for this connection, skipping record save', {
-                                connectionAddress,
-                                recordTags: Object.keys(record.tags),
-                                timestamp: new Date().toISOString()
-                            });
-                        }
-                    } else {
-                        logger.warn('Single record parsed but has no tags:', {
-                            connectionAddress,
-                            recordLength: endOffset - currentOffset,
-                            timestamp: new Date().toISOString()
-                        });
-                    }
-                }
+            for (const record of records) {
+                await this.persistParsedRecord(record, connectionAddress, result);
             }
+
             return result;
         } catch (error) {
-            console.error('Error parsing main packet:', error);
+            logger.error('Error parsing main packet:', error);
             throw error;
         }
     }
@@ -711,8 +554,8 @@ class GalileoskyParser extends EventEmitter {
             
             for (let i = 0; i < 32; i++) {
                 if (bitmask & (1 << i)) {
-                    const tagHex = `0x${i.toString(16).toUpperCase()}`;
-                    const { value, newOffset } = this.parseTagValue(buffer, record.nextOffset, i);
+                    const tagHex = `0x${i.toString(16).padStart(2, '0')}`;
+                    const { value, newOffset } = this.parseTagValue(buffer, record.nextOffset, tagHex);
                     record.tags[tagHex] = {
                         value: value,
                         type: tagDefinitions[tagHex]?.type,
@@ -830,7 +673,16 @@ class GalileoskyParser extends EventEmitter {
     parseTagValue(buffer, recordOffset, tagHex) {
         const definition = this.tagDefinitionsCache.get(String(tagHex).toLowerCase());
         if (!definition) {
-            return { value: null, newOffset: recordOffset + 1 };
+            logger.warn(`Unknown tag ${tagHex} at offset ${recordOffset}, ending record`, {
+                tagHex,
+                recordOffset
+            });
+            return {
+                value: null,
+                newOffset: recordOffset,
+                definition: null,
+                stopRecord: true
+            };
         }
 
         let value;
@@ -964,7 +816,8 @@ class GalileoskyParser extends EventEmitter {
         return {
             value,
             newOffset,
-            definition
+            definition,
+            stopRecord: false
         };
     }
 
@@ -1184,16 +1037,14 @@ class GalileoskyParser extends EventEmitter {
             throw new Error('Incomplete packet');
         }
 
-        // Temporarily disable CRC validation for testing
-        /*
-        // Verify checksum
-        const calculatedChecksum = this.calculateCRC16(buffer.slice(0, expectedLength));
-        const receivedChecksum = buffer.readUInt16LE(expectedLength);
+        if (this.validateChecksum !== false) {
+            const calculatedChecksum = this.calculateCRC16(buffer.slice(0, expectedLength));
+            const receivedChecksum = buffer.readUInt16LE(expectedLength);
 
-        if (calculatedChecksum !== receivedChecksum) {
-            throw new Error('Checksum mismatch');
+            if (calculatedChecksum !== receivedChecksum) {
+                throw new Error('Checksum mismatch');
+            }
         }
-        */
 
         return {
             hasUnsentData,
@@ -1532,6 +1383,10 @@ class GalileoskyParser extends EventEmitter {
         const parsedTags = [];
 
         while (recordOffset < endOffset) {
+            if (isNewRecordStart(buffer, recordOffset, endOffset, record)) {
+                break;
+            }
+
             const tag = buffer.readUInt8(recordOffset);
             recordOffset++;
 
@@ -1683,18 +1538,23 @@ class GalileoskyParser extends EventEmitter {
                     }
                 }
 
-                const { value, newOffset } = this.parseTagValue(buffer, recordOffset, tagHex);
+                const { value, newOffset, definition: tagDef, stopRecord } = this.parseTagValue(buffer, recordOffset, tagHex);
 
-                if (value !== null && definition) {
+                if (stopRecord) {
+                    record.nextOffset = recordOffset - 1;
+                    break;
+                }
+
+                if (value !== null && tagDef) {
                     record.tags[tagHex] = {
                         value: value,
-                        type: definition.type,
-                        description: definition.description
+                        type: tagDef.type,
+                        description: tagDef.description
                     };
                     parsedTags.push(tagHex);
 
                     // Extract IMEI from tag 0x03 (like original implementation)
-                    if (tagHex === '0x03' && definition.type === 'string' && value && connectionAddress) {
+                    if (tagHex === '0x03' && tagDef.type === 'string' && value && connectionAddress) {
                         // Additional validation for IMEI
                         if (typeof value === 'string' && /^\d{15}$/.test(value)) {
                             this.setIMEI(connectionAddress, value);
@@ -1718,6 +1578,8 @@ class GalileoskyParser extends EventEmitter {
         if (record.tags['0xe0'] && (record.tags['0xe1'] || record.tags['0xeb'])) {
             record.isCommandReply = true;
         }
+
+        record.nextOffset = recordOffset;
 
         // Log the parsed tags for debugging
         if (parsedTags.length > 0) {

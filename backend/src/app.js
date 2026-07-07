@@ -541,24 +541,14 @@ const tcpServer = net.createServer((socket) => {
                 }
 
                 if (isExtensionPacket) {
-                    // Handle extension packet immediately
-                    const packetChecksum = packet.readUInt16LE(packet.length - 2);
-                    const confirmation = Buffer.from([0x02, packetChecksum & 0xFF, (packetChecksum >> 8) & 0xFF]);
-                    socket.write(confirmation);
-                    logger.info('Confirmation sent for extension packet:', {
-                        address: socket.remoteAddress + ':' + socket.remotePort,
-                        hex: confirmation.toString('hex').toUpperCase(),
-                        checksum: `0x${confirmation.slice(1).toString('hex').toUpperCase()}`,
-                        timestamp: new Date().toISOString()
+                    logger.debug('Extension packet queued for tag-stream parse', {
+                        header: `0x${packetType.toString(16).padStart(2, '0')}`
                     });
-                    continue;
                 }
 
-                // Queue main packets for processing
                 packets.push(packet);
             }
 
-            // Process all main packets using the parser directly
             for (const packet of packets) {
                 try {
                     // Send confirmation immediately (don't wait for processing)
