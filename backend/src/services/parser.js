@@ -31,7 +31,7 @@ class GalileoskyParser extends EventEmitter {
         this.batchTimeout = 2000; // 2 seconds timeout
         this.recordBuffer = []; // Buffer for batch inserts
         this.deviceQueues = new Map(); // Per-device processing queues
-        this.isProcessing = false; // Prevent concurrent batch processing
+        this.batchChain = Promise.resolve(); // Serialize batch writes (prevents flushBuffer spin)
         this.maxConcurrentDevices = 5; // Max devices processing simultaneously
         this.processingDevices = new Set(); // Track devices currently processing
         
@@ -49,18 +49,30 @@ class GalileoskyParser extends EventEmitter {
     startBatchProcessor() {
         // Process batches every 2 seconds
         setInterval(() => {
-            this.processBatch();
+            if (this.recordBuffer.length > 0) {
+                this.scheduleBatch().catch((error) => {
+                    logger.error('Scheduled batch processing failed:', error);
+                });
+            }
         }, this.batchTimeout);
         
         logger.info('Batch processor started with batch size:', this.batchSize);
     }
 
-    async processBatch() {
-        if (this.isProcessing || this.recordBuffer.length === 0) {
+    scheduleBatch() {
+        this.batchChain = this.batchChain
+            .then(() => this.runNextBatch())
+            .catch((error) => {
+                logger.error('Batch chain error:', error);
+            });
+        return this.batchChain;
+    }
+
+    async runNextBatch() {
+        if (this.recordBuffer.length === 0) {
             return;
         }
 
-        this.isProcessing = true;
         const batch = this.recordBuffer.splice(0, this.batchSize);
         try {
             if (batch.length > 0) {
@@ -71,9 +83,11 @@ class GalileoskyParser extends EventEmitter {
             this.recordBuffer.unshift(...batch);
             logger.error('Error processing batch:', error);
             throw error;
-        } finally {
-            this.isProcessing = false;
         }
+    }
+
+    async processBatch() {
+        return this.scheduleBatch();
     }
 
     async batchSaveToDatabase(records) {
@@ -150,14 +164,19 @@ class GalileoskyParser extends EventEmitter {
         
         // Auto-flush if buffer is getting too large
         if (this.recordBuffer.length >= this.batchSize * 2) {
-            setImmediate(() => this.processBatch());
+            setImmediate(() => {
+                this.scheduleBatch().catch((error) => {
+                    logger.error('Auto batch flush failed:', error);
+                });
+            });
         }
     }
 
     async flushBuffer() {
         while (this.recordBuffer.length > 0) {
-            await this.processBatch();
+            await this.scheduleBatch();
         }
+        await this.batchChain;
     }
 
     getPendingTelemetryCount(connectionAddress) {
@@ -401,15 +420,20 @@ class GalileoskyParser extends EventEmitter {
 
     // Method to clear IMEI for a specific connection
     clearIMEI(connectionAddress) {
-        if (connectionAddress) {
-            const imei = this.imeiByConnection.get(connectionAddress);
-            if (imei) {
-                this.imeiByConnection.delete(connectionAddress);
+        if (!connectionAddress) {
+            logger.warn('clearIMEI called without connection address — ignored');
+            return;
+        }
+
+        const imei = this.imeiByConnection.get(connectionAddress);
+        if (imei) {
+            this.imeiByConnection.delete(connectionAddress);
+            if (this.connectionByIMEI.get(imei) === connectionAddress) {
                 this.connectionByIMEI.delete(imei);
-                logger.info(`IMEI cleared for connection: ${connectionAddress} (IMEI: ${imei})`);
-            } else {
-                logger.info(`No IMEI found for connection: ${connectionAddress}`);
             }
+            logger.info(`IMEI cleared for connection: ${connectionAddress} (IMEI: ${imei})`);
+        } else {
+            logger.debug(`No IMEI found for connection: ${connectionAddress}`);
         }
     }
 
@@ -422,11 +446,6 @@ class GalileoskyParser extends EventEmitter {
     isIMEIConnectedFromDifferentAddress(imei, currentConnectionAddress) {
         const existingConnection = this.connectionByIMEI.get(imei);
         return existingConnection && existingConnection !== currentConnectionAddress;
-    }
-
-    // Method to clear IMEI for new connections (legacy support)
-    clearIMEI() {
-        logger.warn('Global IMEI clear called - this should not be used with connection-specific IMEI management');
     }
 
     // Method to get connection statistics
