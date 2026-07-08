@@ -28,7 +28,7 @@ import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import axios from 'axios';
 import { useSnackbar } from 'notistack';
-import { BASE_URL, startAsyncExport, fetchExportJobStatus, getExportJobDownloadUrl } from '../services/api';
+import { BASE_URL, startAsyncExport, fetchExportJobStatus, getExportJobDownloadUrl, fetchDevices } from '../services/api';
 
 const PREVIEW_PAGE_SIZE = 100;
 
@@ -94,9 +94,9 @@ const DataExport = () => {
   });
   const [exportFormat, setExportFormat] = useState('csv');
   const [activeTab, setActiveTab] = useState(0);
-  const [availableImeis, setAvailableImeis] = useState([]);
+  const [availableDevices, setAvailableDevices] = useState([]);
   const [selectedImeis, setSelectedImeis] = useState([]);
-  const [imeiLoading, setImeiLoading] = useState(false);
+  const [devicesLoading, setDevicesLoading] = useState(false);
   const [backgroundExporting, setBackgroundExporting] = useState(false);
   const [exportJobStatus, setExportJobStatus] = useState(null);
 
@@ -152,24 +152,33 @@ const DataExport = () => {
     setLoading(false);
   };
 
-  const fetchAvailableImeis = async () => {
-    setImeiLoading(true);
+  const getDeviceLabel = (imei) => {
+    const device = availableDevices.find((d) => d.imei === imei);
+    return device?.name || imei;
+  };
+
+  const fetchAvailableDevices = async () => {
+    setDevicesLoading(true);
     try {
-      const response = await axios.get(`${BASE_URL}/api/records/imeis`, {
-        withCredentials: true
-      });
-      setAvailableImeis(response.data);
+      const response = await fetchDevices();
+      if (!response.ok) {
+        throw new Error('Failed to load devices');
+      }
+      const devices = await response.json();
+      const sorted = (Array.isArray(devices) ? devices : [])
+        .filter((device) => device?.imei)
+        .sort((a, b) => (a.name || a.imei).localeCompare(b.name || b.imei, undefined, { sensitivity: 'base' }));
+      setAvailableDevices(sorted);
     } catch (error) {
-      console.error('Error fetching IMEIs:', error);
-      // Set empty array as fallback
-      setAvailableImeis([]);
+      console.error('Error fetching devices:', error);
+      setAvailableDevices([]);
     } finally {
-      setImeiLoading(false);
+      setDevicesLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchAvailableImeis();
+    fetchAvailableDevices();
   }, []);
 
   const pollExportJob = async (jobId) => {
@@ -289,7 +298,7 @@ const DataExport = () => {
     setActiveTab(newValue);
   };
 
-  const handleImeiChange = (event) => {
+  const handleDeviceChange = (event) => {
     const value = event.target.value;
     setSelectedImeis(typeof value === 'string' ? value.split(',') : value);
   };
@@ -345,29 +354,29 @@ const DataExport = () => {
           </Grid>
           <Grid item xs={12} md={4}>
             <FormControl fullWidth>
-              <InputLabel>Select IMEIs (Optional)</InputLabel>
+              <InputLabel>Select Device Names (Optional)</InputLabel>
               <Select
                 multiple
                 value={selectedImeis}
-                onChange={handleImeiChange}
-                input={<OutlinedInput label="Select IMEIs (Optional)" />}
+                onChange={handleDeviceChange}
+                input={<OutlinedInput label="Select Device Names (Optional)" />}
                 renderValue={(selected) => (
                   <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                    {selected.map((value) => (
-                      <Chip key={value} label={value} size="small" />
+                    {selected.map((imei) => (
+                      <Chip key={imei} label={getDeviceLabel(imei)} size="small" />
                     ))}
                   </Box>
                 )}
-                disabled={imeiLoading}
+                disabled={devicesLoading}
               >
-                {imeiLoading ? (
-                  <MenuItem disabled>Loading IMEIs...</MenuItem>
-                ) : availableImeis.length === 0 ? (
-                  <MenuItem disabled>No IMEIs available</MenuItem>
+                {devicesLoading ? (
+                  <MenuItem disabled>Loading devices...</MenuItem>
+                ) : availableDevices.length === 0 ? (
+                  <MenuItem disabled>No devices available</MenuItem>
                 ) : (
-                  availableImeis.map((imei) => (
-                    <MenuItem key={imei} value={imei}>
-                      {imei}
+                  availableDevices.map((device) => (
+                    <MenuItem key={device.imei} value={device.imei}>
+                      {device.name || device.imei}
                     </MenuItem>
                   ))
                 )}
