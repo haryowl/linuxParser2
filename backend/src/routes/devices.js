@@ -383,10 +383,17 @@ router.get('/', requireAuth, filterDevicesByPermission, asyncHandler(async (req,
     
     let devices;
     
+    const deviceListAttributes = [
+        'id', 'name', 'imei', 'status', 'lastSeen', 'isActive', 'groupId',
+        'lastLatitude', 'lastLongitude', 'lastLocationAt',
+        'lastSpeed', 'lastDirection', 'lastAltitude', 'lastSatellites', 'lastHdop'
+    ];
+
     // If admin, get all devices with optimized query
     if (req.user.role === 'admin') {
         logger.debug('Admin user - getting all devices');
         devices = await Device.findAll({
+            attributes: deviceListAttributes,
             order: [['lastSeen', 'DESC']],
             limit: 1000
         });
@@ -443,6 +450,7 @@ router.get('/', requireAuth, filterDevicesByPermission, asyncHandler(async (req,
         // Get devices with single optimized query
         devices = await Device.findAll({
             where: whereCondition,
+            attributes: deviceListAttributes,
             order: [['lastSeen', 'DESC']],
             limit: 1000
         });
@@ -488,109 +496,34 @@ router.get('/locations', requireAuth, filterDevicesByPermission, asyncHandler(as
         return res.json(cached);
     }
 
+    const locationAttributes = [
+        'id', 'name', 'imei', 'status', 'lastSeen', 'isActive',
+        'lastLatitude', 'lastLongitude', 'lastLocationAt',
+        'lastSpeed', 'lastDirection', 'lastAltitude', 'lastSatellites', 'lastHdop'
+    ];
+
     let devices;
-    let accessibleDeviceImeis = [];
-    
-    // Get devices based on user permissions
-    if (req.user.role === 'admin') {
-        console.log('👑 Admin user - getting all device locations');
+    // Reuse permissions resolved by filterDevicesByPermission (null = admin/all)
+    const accessibleDeviceImeis = req.accessibleDeviceImeis;
+
+    if (accessibleDeviceImeis === null) {
         devices = await Device.findAll({
+            attributes: locationAttributes,
             order: [['lastSeen', 'DESC']],
             limit: 1000
         });
-        accessibleDeviceImeis = devices.map(device => device.imei);
+    } else if (accessibleDeviceImeis.length > 0) {
+        devices = await Device.findAll({
+            where: { imei: { [Op.in]: accessibleDeviceImeis } },
+            attributes: locationAttributes,
+            order: [['lastSeen', 'DESC']],
+            limit: 1000
+        });
     } else {
-        console.log('👤 Non-admin user - filtering device locations by permissions');
-        
-        // Get devices from permissions
-        if (req.userPermissions.devices && req.userPermissions.devices.length > 0) {
-            accessibleDeviceImeis.push(...req.userPermissions.devices);
-        }
-        
-        // Get devices from device groups
-        if (req.userPermissions.deviceGroups && req.userPermissions.deviceGroups.length > 0) {
-            const { DeviceGroup } = require('../models');
-            const deviceGroups = await DeviceGroup.findAll({
-                where: { id: req.userPermissions.deviceGroups },
-                include: ['devices']
-            });
-            
-            for (const group of deviceGroups) {
-                if (group.devices) {
-                    accessibleDeviceImeis.push(...group.devices.map(device => device.imei));
-                }
-            }
-        }
-        
-        // Get devices from UserDeviceAccess table
-        const { UserDeviceAccess } = require('../models');
-        const userDeviceAccess = await UserDeviceAccess.findAll({
-            where: { 
-                userId: req.user.userId,
-                isActive: true
-            },
-            include: [
-                {
-                    model: Device,
-                    as: 'device',
-                    attributes: ['imei']
-                }
-            ]
-        });
-        
-        for (const access of userDeviceAccess) {
-            if (access.device && !accessibleDeviceImeis.includes(access.device.imei)) {
-                accessibleDeviceImeis.push(access.device.imei);
-            }
-        }
-        
-        // Get devices from UserDeviceGroupAccess table
-        const { UserDeviceGroupAccess } = require('../models');
-        const userGroupAccess = await UserDeviceGroupAccess.findAll({
-            where: { 
-                userId: req.user.userId,
-                isActive: true
-            },
-            include: [
-                {
-                    model: DeviceGroup,
-                    as: 'group',
-                    include: ['devices']
-                }
-            ]
-        });
-        
-        for (const access of userGroupAccess) {
-            if (access.group && access.group.devices) {
-                for (const device of access.group.devices) {
-                    if (!accessibleDeviceImeis.includes(device.imei)) {
-                        accessibleDeviceImeis.push(device.imei);
-                    }
-                }
-            }
-        }
-        
-        // Remove duplicates
-        accessibleDeviceImeis = [...new Set(accessibleDeviceImeis)];
-        
-        console.log(`🔍 User has access to ${accessibleDeviceImeis.length} devices for locations`);
-        
-        // Get devices with accessible IMEIs
-        if (accessibleDeviceImeis.length > 0) {
-            devices = await Device.findAll({
-                where: { imei: { [Op.in]: accessibleDeviceImeis } },
-                order: [['lastSeen', 'DESC']],
-                limit: 1000
-            });
-        } else {
-            devices = []; // No accessible devices
-        }
+        devices = [];
     }
-    
-    // Get device IMEIs for location lookup
-    const deviceImeis = devices.map(device => device.imei);
-    
-    if (deviceImeis.length === 0) {
+
+    if (devices.length === 0) {
         return res.json([]);
     }
 

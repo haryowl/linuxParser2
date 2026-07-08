@@ -394,36 +394,44 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
         let totalDevices = 0;
         let totalRecords = 0;
         let recentRecords = 0;
+        let activeDevices = 0;
 
+        // Avoid full-table COUNT on huge SQLite DBs during login — blocks locations/map.
         if (accessibleImeis === null) {
             totalDevices = await Device.count();
+            activeDevices = await Device.count({
+                where: {
+                    lastLatitude: { [Op.ne]: null },
+                    lastLongitude: { [Op.ne]: null },
+                    lastSeen: { [Op.gte]: oneDayAgo }
+                }
+            });
             const [estimateRow] = await sequelize.query(
                 'SELECT MAX(id) AS total FROM "Records"',
                 { type: QueryTypes.SELECT }
             );
             totalRecords = Number(estimateRow?.total) || 0;
-            recentRecords = await Record.count({
-                where: {
-                    timestamp: { [Op.gte]: oneDayAgo }
-                }
-            });
+            // Approximate recent activity from devices that reported GPS recently
+            recentRecords = activeDevices;
         } else if (accessibleImeis.length > 0) {
-            totalDevices = await Device.count({
-                where: { imei: { [Op.in]: accessibleImeis } }
-            });
-            totalRecords = await Record.count({
-                where: { deviceImei: { [Op.in]: accessibleImeis } }
-            });
-            recentRecords = await Record.count({
+            const deviceWhere = { imei: { [Op.in]: accessibleImeis } };
+            totalDevices = await Device.count({ where: deviceWhere });
+            activeDevices = await Device.count({
                 where: {
-                    deviceImei: { [Op.in]: accessibleImeis },
-                    timestamp: { [Op.gte]: oneDayAgo }
+                    ...deviceWhere,
+                    lastLatitude: { [Op.ne]: null },
+                    lastLongitude: { [Op.ne]: null },
+                    lastSeen: { [Op.gte]: oneDayAgo }
                 }
             });
+            // Skip expensive Records COUNT — use device count as lightweight placeholder
+            totalRecords = 0;
+            recentRecords = activeDevices;
         }
 
         const stats = {
             totalDevices,
+            activeDevices,
             totalRecords,
             recentRecords,
             lastUpdate: now.toISOString()

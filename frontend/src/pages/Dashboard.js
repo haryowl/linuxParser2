@@ -507,7 +507,14 @@ const Dashboard = () => {
                         GPS Tracking
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        {Array.isArray(devices) ? devices.filter(d => d.latitude && d.longitude).length : 0} devices tracked
+                        {Array.isArray(devices)
+                          ? devices.filter((d) =>
+                              (d.lastLatitude != null && d.lastLongitude != null)
+                              || (d.location?.latitude != null && d.location?.longitude != null)
+                              || (d.latitude != null && d.longitude != null)
+                            ).length
+                          : 0}{' '}
+                        devices tracked
                       </Typography>
                     </Box>
                   </Box>

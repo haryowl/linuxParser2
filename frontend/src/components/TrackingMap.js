@@ -238,13 +238,33 @@ const TrackingMap = ({ height = 400, showInfo = true, selectedImeis = [], seedDe
   // Connect to WebSocket for real-time updates
   useWebSocket(null, handleWebSocketMessage);
 
-  // Load initial data — show seed devices immediately, enrich with locations in background
+  // Load initial data — show seed devices with embedded last GPS immediately
   useEffect(() => {
     if (seedDevices.length > 0) {
-      const seeded = selectedImeis.length > 0
+      const seeded = (selectedImeis.length > 0
         ? seedDevices.filter((device) => selectedImeis.includes(device.imei))
-        : seedDevices;
+        : seedDevices
+      ).map((device) => {
+        if (device.location) return device;
+        if (device.lastLatitude == null || device.lastLongitude == null) return device;
+        const normalized = normalizeCoordinates(device.lastLatitude, device.lastLongitude);
+        return {
+          ...device,
+          location: {
+            latitude: normalized.latitude,
+            longitude: normalized.longitude,
+            timestamp: resolveTimestamp(device.lastLocationAt, device.lastSeen),
+            speed: device.lastSpeed,
+            direction: device.lastDirection
+          }
+        };
+      });
       setDevices(seeded);
+      const withLoc = seeded.filter((d) => d.location);
+      if (withLoc.length > 0) {
+        setMapCenter([withLoc[0].location.latitude, withLoc[0].location.longitude]);
+        setMapZoom(10);
+      }
       setLoading(false);
     }
     loadDevicesWithLocations();
@@ -267,9 +287,11 @@ const TrackingMap = ({ height = 400, showInfo = true, selectedImeis = [], seedDe
     );
   }
 
-  // Ensure devices is an array before filtering
   const devicesArray = Array.isArray(devices) ? devices : [];
   const devicesWithLocation = devicesArray.filter(device => device && device.location);
+  const mapError = devicesWithLocation.length > 0 && error?.includes('timed out')
+    ? null
+    : error;
 
   return (
     <Grid container spacing={2}>
@@ -279,9 +301,9 @@ const TrackingMap = ({ height = 400, showInfo = true, selectedImeis = [], seedDe
             Device Locations
           </Typography>
           
-          {error && (
+          {mapError && (
             <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
+              {mapError}
             </Alert>
           )}
           

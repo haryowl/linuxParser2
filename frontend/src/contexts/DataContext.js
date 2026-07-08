@@ -187,15 +187,23 @@ export function DataProvider({ children }) {
       setError(null);
 
       try {
+        // Critical path: devices only — unlock Dashboard shell asap
         await fetchDevices();
         if (!cancelled) {
           setLoading(false);
         }
 
-        // Load lighter secondary data without blocking the shell
+        // Non-blocking: alerts first (usually empty/fast), then records + stats
+        void fetchAlerts().catch((err) => {
+          if (!cancelled) console.error('Alerts load failed:', err);
+        });
+
+        // Defer Records/stats slightly so /locations can use free DB connection
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        if (cancelled) return;
+
         void Promise.all([
           fetchRecords(),
-          fetchAlerts(),
           fetchStats()
         ]).catch((err) => {
           if (!cancelled) {
