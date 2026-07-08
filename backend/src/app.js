@@ -651,7 +651,8 @@ module.exports = {
     app, 
     httpServer: server, 
     tcpServer,
-    gracefulShutdown
+    gracefulShutdown,
+    getBufferStats
 };
 
 

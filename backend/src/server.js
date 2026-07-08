@@ -19,6 +19,7 @@ const { ensureDeviceLocationColumns } = require('./utils/ensureDeviceLocationCol
 const { ensureDeviceArchiveStatTable } = require('./utils/ensureDeviceArchiveStatTable');
 const archiveStatStore = require('./services/archiveStatStore');
 const recordRetention = require('./services/recordRetention');
+const storageCleanup = require('./services/storageCleanup');
 const { buildSequelizeOptions } = require('./config/database');
 
 // Middleware - CORS is already configured in app.js
@@ -68,6 +69,7 @@ async function startServer() {
         }
 
         recordRetention.start();
+        storageCleanup.start();
         logger.info('Database indexes and retention scheduler ensured');
 
         // Get HTTP server from app.js (already started)

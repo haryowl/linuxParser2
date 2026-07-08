@@ -55,7 +55,10 @@ import {
   fetchDevices,
   fetchRetentionConfig,
   updateRetentionConfig,
-  runRetentionPurge
+  runRetentionPurge,
+  fetchStorageConfig,
+  updateStorageConfig,
+  runStorageCleanup
 } from '../services/api';
 
 const Settings = () => {
@@ -118,6 +121,13 @@ const Settings = () => {
   });
   const [isLoadingRetention, setIsLoadingRetention] = useState(false);
   const [isPurgingRetention, setIsPurgingRetention] = useState(false);
+  const [storageConfig, setStorageConfig] = useState({
+    logs: { enabled: true, maxTotalSizeMB: 500, maxFilesPerDirectory: 5 },
+    exports: { enabled: true, retentionDays: 30 },
+    backups: { enabled: true, retentionDays: 7, maxCount: 20 }
+  });
+  const [isLoadingStorage, setIsLoadingStorage] = useState(false);
+  const [isRunningCleanup, setIsRunningCleanup] = useState(false);
 
   const showSnackbar = (message, severity) => {
     setSnackbar({
@@ -129,6 +139,72 @@ const Settings = () => {
 
   const handleCloseSnackbar = () => {
     setSnackbar({ ...snackbar, open: false });
+  };
+
+  const formatSize = (mb) => {
+    if (mb === null || mb === undefined || Number.isNaN(Number(mb))) return '0 MB';
+    const value = Number(mb);
+    if (value >= 1024) return `${(value / 1024).toFixed(2)} GB`;
+    return `${value.toFixed(1)} MB`;
+  };
+
+  const loadStorageConfig = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      setIsLoadingStorage(true);
+      const response = await fetchStorageConfig();
+      if (response.ok) {
+        const data = await response.json();
+        setStorageConfig(data);
+      }
+    } catch (error) {
+      showSnackbar('Failed to load storage settings', 'error');
+    } finally {
+      setIsLoadingStorage(false);
+    }
+  }, [isAdmin]);
+
+  const handleSaveStorage = async () => {
+    try {
+      setIsLoadingStorage(true);
+      const response = await updateStorageConfig({
+        logs: storageConfig.logs,
+        exports: storageConfig.exports,
+        backups: storageConfig.backups
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setStorageConfig(data.config || storageConfig);
+        showSnackbar('Storage settings saved', 'success');
+      } else {
+        showSnackbar('Failed to save storage settings', 'error');
+      }
+    } catch (error) {
+      showSnackbar('Failed to save storage settings', 'error');
+    } finally {
+      setIsLoadingStorage(false);
+    }
+  };
+
+  const handleRunStorageCleanup = async (section) => {
+    try {
+      setIsRunningCleanup(true);
+      const response = await runStorageCleanup(section);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.config) {
+          setStorageConfig(data.config);
+        }
+        showSnackbar(section ? `${section} cleanup completed` : 'Storage cleanup completed', 'success');
+        await fetchSystemStatus();
+      } else {
+        showSnackbar('Storage cleanup failed', 'error');
+      }
+    } catch (error) {
+      showSnackbar('Storage cleanup failed', 'error');
+    } finally {
+      setIsRunningCleanup(false);
+    }
   };
 
   const loadRetentionConfig = useCallback(async () => {
@@ -323,6 +399,7 @@ const Settings = () => {
     fetchSettings();
     fetchForwarderConfig();
     loadRetentionConfig();
+    loadStorageConfig();
     
     // Load secondary data with delay to avoid overwhelming
     setTimeout(() => {
@@ -337,7 +414,7 @@ const Settings = () => {
     return () => {
       clearInterval(statusInterval);
     };
-  }, [fetchSettings, fetchForwarderConfig, loadRetentionConfig]);
+  }, [fetchSettings, fetchForwarderConfig, loadRetentionConfig, loadStorageConfig]);
 
   useEffect(() => {
     // Fetch device IMEIs for the multi-select
@@ -672,7 +749,7 @@ const Settings = () => {
                 </Button>
               </Box>
               <Grid container spacing={3}>
-                <Grid item xs={12} md={4}>
+                <Grid item xs={12} md={3}>
                   <Box sx={{ 
                     p: 3, 
                     borderRadius: 2,
@@ -682,17 +759,18 @@ const Settings = () => {
                   }}>
                     <MemoryIcon sx={{ fontSize: 48, color: theme.palette.primary.main, mb: 2 }} />
                     <Typography variant="h4" fontWeight="bold" color="primary.main" gutterBottom>
-                      {systemStatus.cpu || 0}
+                      {systemStatus.memory?.process?.heapUsedMB
+                        ?? (systemStatus.memory ? Math.round(systemStatus.memory.heapUsed / 1024 / 1024) : 0)} MB
                     </Typography>
                     <Typography variant="subtitle1" fontWeight="600" gutterBottom color="text.primary">
-                      CPU Cores
+                      Process RAM
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Available CPU cores
+                      Heap used / {systemStatus.memory?.process?.heapTotalMB || 0} MB total
                     </Typography>
                   </Box>
                 </Grid>
-                <Grid item xs={12} md={4}>
+                <Grid item xs={12} md={3}>
                   <Box sx={{ 
                     p: 3, 
                     borderRadius: 2,
@@ -702,17 +780,37 @@ const Settings = () => {
                   }}>
                     <StorageIcon sx={{ fontSize: 48, color: theme.palette.success.main, mb: 2 }} />
                     <Typography variant="h4" fontWeight="bold" color="success.main" gutterBottom>
-                      {systemStatus.memory ? Math.round(systemStatus.memory.heapUsed / 1024 / 1024) : 0} MB
+                      {systemStatus.memory?.system?.usedPercent ?? 0}%
                     </Typography>
                     <Typography variant="subtitle1" fontWeight="600" gutterBottom color="text.primary">
-                      Memory Usage
+                      System RAM
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Heap memory used
+                      {formatSize(systemStatus.memory?.system?.usedMB)} / {formatSize(systemStatus.memory?.system?.totalMB)}
                     </Typography>
                   </Box>
                 </Grid>
-                <Grid item xs={12} md={4}>
+                <Grid item xs={12} md={3}>
+                  <Box sx={{ 
+                    p: 3, 
+                    borderRadius: 2,
+                    backgroundColor: alpha(theme.palette.warning.main, 0.05),
+                    border: `1px solid ${alpha(theme.palette.warning.main, 0.2)}`,
+                    textAlign: 'center'
+                  }}>
+                    <StorageIcon sx={{ fontSize: 48, color: theme.palette.warning.main, mb: 2 }} />
+                    <Typography variant="h4" fontWeight="bold" color="warning.main" gutterBottom>
+                      {formatSize(systemStatus.storage?.total?.mb)}
+                    </Typography>
+                    <Typography variant="subtitle1" fontWeight="600" gutterBottom color="text.primary">
+                      App Storage
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Database, logs, exports, backups
+                    </Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={12} md={3}>
                   <Box sx={{ 
                     p: 3, 
                     borderRadius: 2,
@@ -721,19 +819,68 @@ const Settings = () => {
                     textAlign: 'center'
                   }}>
                     <SpeedIcon sx={{ fontSize: 48, color: theme.palette.info.main, mb: 2 }} />
-                    <Typography variant="h6" fontWeight="bold" color="info.main" gutterBottom>
-                      {systemStatus.platform || 'Unknown'}
+                    <Typography variant="h4" fontWeight="bold" color="info.main" gutterBottom>
+                      {systemStatus.cache?.activeEntries ?? 0}
                     </Typography>
                     <Typography variant="subtitle1" fontWeight="600" gutterBottom color="text.primary">
-                      Platform
+                      API Cache
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Operating system
+                      {systemStatus.cpu || 0} CPU cores · {systemStatus.platform || 'Unknown'}
                     </Typography>
                   </Box>
                 </Grid>
               </Grid>
               <Box sx={{ mt: 3, p: 3, borderRadius: 2, backgroundColor: alpha(theme.palette.background.default, 0.5), border: `1px solid ${theme.palette.divider}` }}>
+                <Typography variant="subtitle1" fontWeight="600" gutterBottom color="text.primary">
+                  Storage Breakdown
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="body2" color="text.secondary">
+                      Database: {formatSize(systemStatus.storage?.database?.mb)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="body2" color="text.secondary">
+                      Logs: {formatSize(systemStatus.storage?.logs?.mb)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="body2" color="text.secondary">
+                      Exports: {formatSize(systemStatus.storage?.exports?.mb)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="body2" color="text.secondary">
+                      Backups: {formatSize(systemStatus.storage?.backups?.mb)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="body2" color="text.secondary">
+                      Sessions: {formatSize(systemStatus.storage?.sessions?.mb)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="body2" color="text.secondary">
+                      Process RSS: {formatSize(systemStatus.memory?.process?.rssMB)}
+                    </Typography>
+                  </Grid>
+                </Grid>
+                {systemStatus.buffers && (
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle2" fontWeight="600" gutterBottom color="text.primary">
+                      GPS Buffers
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Memory buffer: {formatSize((systemStatus.buffers.memoryBufferSize || 0) / (1024 * 1024))} ·
+                      Disk buffer: {formatSize((systemStatus.buffers.diskBufferSize || 0) / (1024 * 1024))} ·
+                      Active connections: {systemStatus.buffers.activeConnections || 0}
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+              <Box sx={{ mt: 2, p: 3, borderRadius: 2, backgroundColor: alpha(theme.palette.background.default, 0.5), border: `1px solid ${theme.palette.divider}` }}>
                 <Grid container spacing={2}>
                   <Grid item xs={12} md={6}>
                     <Typography variant="body2" color="text.secondary">
@@ -921,6 +1068,171 @@ const Settings = () => {
             </CardContent>
           </Card>
         </Grid>
+
+        {isAdmin && (
+          <Grid item xs={12}>
+            <Card sx={{ mt: 1 }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>Storage Cleanup</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Automatically clean old logs, export files, and backups. Runs daily at 03:30 UTC.
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" fontWeight="600">Logs</Typography>
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <FormControlLabel
+                      control={(
+                        <Switch
+                          checked={storageConfig.logs?.enabled ?? true}
+                          onChange={(e) => setStorageConfig((prev) => ({
+                            ...prev,
+                            logs: { ...prev.logs, enabled: e.target.checked }
+                          }))}
+                        />
+                      )}
+                      label="Enable log cleanup"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      label="Max total log size (MB)"
+                      type="number"
+                      fullWidth
+                      value={storageConfig.logs?.maxTotalSizeMB ?? 500}
+                      onChange={(e) => setStorageConfig((prev) => ({
+                        ...prev,
+                        logs: { ...prev.logs, maxTotalSizeMB: Number(e.target.value) }
+                      }))}
+                      inputProps={{ min: 50, max: 10000 }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      label="Max log files per folder"
+                      type="number"
+                      fullWidth
+                      value={storageConfig.logs?.maxFilesPerDirectory ?? 5}
+                      onChange={(e) => setStorageConfig((prev) => ({
+                        ...prev,
+                        logs: { ...prev.logs, maxFilesPerDirectory: Number(e.target.value) }
+                      }))}
+                      inputProps={{ min: 1, max: 50 }}
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Last log cleanup: {storageConfig.logs?.lastCleanupAt
+                        ? new Date(storageConfig.logs.lastCleanupAt).toLocaleString()
+                        : 'Never'}
+                      {storageConfig.logs?.lastCleanupDeleted
+                        ? ` (${storageConfig.logs.lastCleanupDeleted} files, ${storageConfig.logs.lastCleanupFreedMB || 0} MB freed)`
+                        : ''}
+                    </Typography>
+                  </Grid>
+
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" fontWeight="600">Exports</Typography>
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <FormControlLabel
+                      control={(
+                        <Switch
+                          checked={storageConfig.exports?.enabled ?? true}
+                          onChange={(e) => setStorageConfig((prev) => ({
+                            ...prev,
+                            exports: { ...prev.exports, enabled: e.target.checked }
+                          }))}
+                        />
+                      )}
+                      label="Enable export cleanup"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      label="Export retention (days)"
+                      type="number"
+                      fullWidth
+                      value={storageConfig.exports?.retentionDays ?? 30}
+                      onChange={(e) => setStorageConfig((prev) => ({
+                        ...prev,
+                        exports: { ...prev.exports, retentionDays: Number(e.target.value) }
+                      }))}
+                      inputProps={{ min: 1, max: 365 }}
+                    />
+                  </Grid>
+
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" fontWeight="600">Backups</Typography>
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <FormControlLabel
+                      control={(
+                        <Switch
+                          checked={storageConfig.backups?.enabled ?? true}
+                          onChange={(e) => setStorageConfig((prev) => ({
+                            ...prev,
+                            backups: { ...prev.backups, enabled: e.target.checked }
+                          }))}
+                        />
+                      )}
+                      label="Enable backup cleanup"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      label="Backup retention (days)"
+                      type="number"
+                      fullWidth
+                      value={storageConfig.backups?.retentionDays ?? 7}
+                      onChange={(e) => setStorageConfig((prev) => ({
+                        ...prev,
+                        backups: { ...prev.backups, retentionDays: Number(e.target.value) }
+                      }))}
+                      inputProps={{ min: 1, max: 365 }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      label="Max backup files"
+                      type="number"
+                      fullWidth
+                      value={storageConfig.backups?.maxCount ?? 20}
+                      onChange={(e) => setStorageConfig((prev) => ({
+                        ...prev,
+                        backups: { ...prev.backups, maxCount: Number(e.target.value) }
+                      }))}
+                      inputProps={{ min: 1, max: 200 }}
+                    />
+                  </Grid>
+
+                  <Grid item xs={12}>
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                      <Button
+                        variant="contained"
+                        startIcon={<SaveIcon />}
+                        onClick={handleSaveStorage}
+                        disabled={isLoadingStorage}
+                      >
+                        Save Storage Settings
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        color="warning"
+                        startIcon={<WarningIcon />}
+                        onClick={() => handleRunStorageCleanup()}
+                        disabled={isRunningCleanup}
+                      >
+                        {isRunningCleanup ? 'Cleaning...' : 'Run Cleanup Now'}
+                      </Button>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
 
         {isAdmin && (
           <Grid item xs={12} md={6}>

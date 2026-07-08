@@ -6,12 +6,14 @@
     const { checkMenuAccess, requireAdmin } = require('../middleware/permissions');
     const { getRetentionConfig, updateRetentionConfig } = require('../services/retentionConfig');
     const recordRetention = require('../services/recordRetention');
+    const { getStorageConfig, updateStorageConfig } = require('../services/storageConfig');
+    const storageCleanup = require('../services/storageCleanup');
+    const { getSystemStatus } = require('../utils/systemMetrics');
 
     router.use(requireAuth);
     router.use(checkMenuAccess('settings'));
     const fs = require('fs').promises;
     const path = require('path');
-    const os = require('os');
     const { getForwarderLogs, reloadConfig } = require('../services/dataForwarder');
 
     // Get settings
@@ -147,29 +149,51 @@
 
     // Get system status
     router.get('/status', asyncHandler(async (req, res) => {
-        const status = {
-            uptime: process.uptime(),
-            memory: process.memoryUsage(),
-            cpu: os.cpus().length,
-            platform: os.platform(),
-            version: process.version,
-            pid: process.pid,
-            startTime: new Date(Date.now() - process.uptime() * 1000)
-        };
+        let getBufferStats = null;
+        try {
+            const appModule = require('../app');
+            getBufferStats = appModule.getBufferStats;
+        } catch (error) {
+            getBufferStats = null;
+        }
+
+        const status = getSystemStatus(getBufferStats);
         res.json(status);
     }));
 
     // Get system health
     router.get('/health', asyncHandler(async (req, res) => {
+        let getBufferStats = null;
+        try {
+            const appModule = require('../app');
+            getBufferStats = appModule.getBufferStats;
+        } catch (error) {
+            getBufferStats = null;
+        }
+
+        const metrics = getSystemStatus(getBufferStats);
+        const heapUsedMB = metrics.memory.process.heapUsedMB;
+        const systemUsedPercent = metrics.memory.system.usedPercent;
+        const storageMB = metrics.storage.total.mb;
+
         const health = {
             status: 'healthy',
             timestamp: new Date().toISOString(),
             checks: {
                 database: 'healthy',
-                memory: process.memoryUsage().heapUsed < 100 * 1024 * 1024 ? 'healthy' : 'warning',
+                memory: heapUsedMB < 800 ? 'healthy' : (heapUsedMB < 1200 ? 'warning' : 'error'),
+                systemMemory: systemUsedPercent < 85 ? 'healthy' : (systemUsedPercent < 95 ? 'warning' : 'error'),
+                storage: storageMB < 2048 ? 'healthy' : (storageMB < 5120 ? 'warning' : 'error'),
                 uptime: process.uptime() > 0 ? 'healthy' : 'error'
             }
         };
+
+        if (Object.values(health.checks).includes('error')) {
+            health.status = 'error';
+        } else if (Object.values(health.checks).includes('warning')) {
+            health.status = 'warning';
+        }
+
         res.json(health);
     }));
 
@@ -244,6 +268,36 @@
     router.post('/retention/purge', requireAdmin, asyncHandler(async (req, res) => {
         const result = await recordRetention.purgeOldRecords();
         res.json({ message: 'Retention purge completed', result });
+    }));
+
+    router.get('/storage', requireAdmin, asyncHandler(async (req, res) => {
+        res.json(getStorageConfig());
+    }));
+
+    router.put('/storage', requireAdmin, asyncHandler(async (req, res) => {
+        const { logs, exports, backups } = req.body;
+        const config = updateStorageConfig({ logs, exports, backups });
+        res.json({ message: 'Storage settings updated', config });
+    }));
+
+    router.post('/storage/cleanup', requireAdmin, asyncHandler(async (req, res) => {
+        const result = await storageCleanup.runAllCleanup();
+        res.json({ message: 'Storage cleanup completed', result, config: getStorageConfig() });
+    }));
+
+    router.post('/storage/cleanup/:section', requireAdmin, asyncHandler(async (req, res) => {
+        const { section } = req.params;
+        let result;
+        if (section === 'logs') {
+            result = storageCleanup.cleanupLogs();
+        } else if (section === 'exports') {
+            result = storageCleanup.cleanupExports();
+        } else if (section === 'backups') {
+            result = storageCleanup.cleanupBackups();
+        } else {
+            return res.status(400).json({ error: 'Invalid cleanup section' });
+        }
+        res.json({ message: `${section} cleanup completed`, result, config: getStorageConfig() });
     }));
 
     module.exports = router;

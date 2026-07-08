@@ -199,6 +199,24 @@ export async function runRetentionPurge() {
   });
 }
 
+export async function fetchStorageConfig() {
+  return authenticatedFetch(`${BASE_URL}/api/settings/storage`);
+}
+
+export async function updateStorageConfig(config) {
+  return authenticatedFetch(`${BASE_URL}/api/settings/storage`, {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  });
+}
+
+export async function runStorageCleanup(section) {
+  const suffix = section ? `/${section}` : '';
+  return authenticatedFetch(`${BASE_URL}/api/settings/storage/cleanup${suffix}`, {
+    method: 'POST',
+  });
+}
+
 export async function startAsyncExport(payload) {
   return authenticatedFetch(`${BASE_URL}/api/records/export/async`, {
     method: 'POST',

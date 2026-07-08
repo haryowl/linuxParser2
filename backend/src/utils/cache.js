@@ -33,6 +33,27 @@ class SimpleCache {
     clear() {
         this.cache.clear();
     }
+
+    getStats() {
+        const now = Date.now();
+        let activeEntries = 0;
+        let expiredEntries = 0;
+
+        for (const [, item] of this.cache.entries()) {
+            if (now > item.expiresAt) {
+                expiredEntries += 1;
+            } else {
+                activeEntries += 1;
+            }
+        }
+
+        return {
+            totalEntries: this.cache.size,
+            activeEntries,
+            expiredEntries,
+            defaultTTLms: this.defaultTTL
+        };
+    }
     
     // Clean expired entries
     cleanup() {
