@@ -397,33 +397,56 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
         let activeDevices = 0;
 
         // Avoid full-table COUNT on huge SQLite DBs during login — blocks locations/map.
+        const hasLastGpsColumns = Boolean(
+            Device.rawAttributes?.lastLatitude && Device.rawAttributes?.lastLongitude
+        );
+
         if (accessibleImeis === null) {
             totalDevices = await Device.count();
-            activeDevices = await Device.count({
-                where: {
-                    lastLatitude: { [Op.ne]: null },
-                    lastLongitude: { [Op.ne]: null },
-                    lastSeen: { [Op.gte]: oneDayAgo }
-                }
-            });
+            if (hasLastGpsColumns) {
+                activeDevices = await Device.count({
+                    where: {
+                        lastLatitude: { [Op.ne]: null },
+                        lastLongitude: { [Op.ne]: null },
+                        lastSeen: { [Op.gte]: oneDayAgo }
+                    }
+                });
+            } else {
+                activeDevices = await Device.count({
+                    where: {
+                        status: 'active',
+                        lastSeen: { [Op.gte]: oneDayAgo }
+                    }
+                });
+            }
             const [estimateRow] = await sequelize.query(
                 'SELECT MAX(id) AS total FROM "Records"',
                 { type: QueryTypes.SELECT }
             );
             totalRecords = Number(estimateRow?.total) || 0;
-            // Approximate recent activity from devices that reported GPS recently
+            // Approximate recent activity from devices that reported recently
             recentRecords = activeDevices;
         } else if (accessibleImeis.length > 0) {
             const deviceWhere = { imei: { [Op.in]: accessibleImeis } };
             totalDevices = await Device.count({ where: deviceWhere });
-            activeDevices = await Device.count({
-                where: {
-                    ...deviceWhere,
-                    lastLatitude: { [Op.ne]: null },
-                    lastLongitude: { [Op.ne]: null },
-                    lastSeen: { [Op.gte]: oneDayAgo }
-                }
-            });
+            if (hasLastGpsColumns) {
+                activeDevices = await Device.count({
+                    where: {
+                        ...deviceWhere,
+                        lastLatitude: { [Op.ne]: null },
+                        lastLongitude: { [Op.ne]: null },
+                        lastSeen: { [Op.gte]: oneDayAgo }
+                    }
+                });
+            } else {
+                activeDevices = await Device.count({
+                    where: {
+                        ...deviceWhere,
+                        status: 'active',
+                        lastSeen: { [Op.gte]: oneDayAgo }
+                    }
+                });
+            }
             // Skip expensive Records COUNT — use device count as lightweight placeholder
             totalRecords = 0;
             recentRecords = activeDevices;

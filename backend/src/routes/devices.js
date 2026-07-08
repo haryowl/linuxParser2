@@ -124,6 +124,23 @@ function buildLocationFromDevice(device) {
     };
 }
 
+/** Only request columns that exist on the Device model (avoids 500 after schema drift). */
+function deviceAttributes(desired) {
+    return desired.filter((attr) => Boolean(Device.rawAttributes?.[attr]));
+}
+
+const DEVICE_LIST_ATTRIBUTE_CANDIDATES = [
+    'id', 'name', 'imei', 'status', 'lastSeen', 'groupId',
+    'lastLatitude', 'lastLongitude', 'lastLocationAt',
+    'lastSpeed', 'lastDirection', 'lastAltitude', 'lastSatellites', 'lastHdop'
+];
+
+const DEVICE_LOCATION_ATTRIBUTE_CANDIDATES = [
+    'id', 'name', 'imei', 'status', 'lastSeen',
+    'lastLatitude', 'lastLongitude', 'lastLocationAt',
+    'lastSpeed', 'lastDirection', 'lastAltitude', 'lastSatellites', 'lastHdop'
+];
+
 // Get multi-device tracking data with color assignment and GPS filtering
 // Get multi-device tracking data with color assignment and GPS filtering - WITH DETAILED PERMISSION CHECK
 router.get('/multi-tracking', requireAuth, filterDevicesByPermission, asyncHandler(async (req, res) => {
@@ -383,11 +400,7 @@ router.get('/', requireAuth, filterDevicesByPermission, asyncHandler(async (req,
     
     let devices;
     
-    const deviceListAttributes = [
-        'id', 'name', 'imei', 'status', 'lastSeen', 'isActive', 'groupId',
-        'lastLatitude', 'lastLongitude', 'lastLocationAt',
-        'lastSpeed', 'lastDirection', 'lastAltitude', 'lastSatellites', 'lastHdop'
-    ];
+    const deviceListAttributes = deviceAttributes(DEVICE_LIST_ATTRIBUTE_CANDIDATES);
 
     // If admin, get all devices with optimized query
     if (req.user.role === 'admin') {
@@ -496,11 +509,7 @@ router.get('/locations', requireAuth, filterDevicesByPermission, asyncHandler(as
         return res.json(cached);
     }
 
-    const locationAttributes = [
-        'id', 'name', 'imei', 'status', 'lastSeen', 'isActive',
-        'lastLatitude', 'lastLongitude', 'lastLocationAt',
-        'lastSpeed', 'lastDirection', 'lastAltitude', 'lastSatellites', 'lastHdop'
-    ];
+    const locationAttributes = deviceAttributes(DEVICE_LOCATION_ATTRIBUTE_CANDIDATES);
 
     let devices;
     // Reuse permissions resolved by filterDevicesByPermission (null = admin/all)
