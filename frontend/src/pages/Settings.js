@@ -561,8 +561,9 @@ const Settings = () => {
   };
 
   const getHealthStatusColor = (status) => {
-    if (!status) return 'default';
-    switch (status.toLowerCase()) {
+    const normalized = typeof status === 'object' ? status?.status : status;
+    if (!normalized) return 'default';
+    switch (normalized.toLowerCase()) {
       case 'healthy':
         return 'success';
       case 'warning':
@@ -575,8 +576,9 @@ const Settings = () => {
   };
 
   const getHealthStatusIcon = (status) => {
-    if (!status) return <ErrorIcon />;
-    switch (status.toLowerCase()) {
+    const normalized = typeof status === 'object' ? status?.status : status;
+    if (!normalized) return <ErrorIcon />;
+    switch (normalized.toLowerCase()) {
       case 'healthy':
         return <CheckCircleIcon />;
       case 'warning':
@@ -586,6 +588,23 @@ const Settings = () => {
       default:
         return <ErrorIcon />;
     }
+  };
+
+  const normalizeHealthCheck = (check) => {
+    if (typeof check === 'string') {
+      return { status: check, value: '', detail: '' };
+    }
+    return {
+      status: check?.status || 'unknown',
+      value: check?.value || '',
+      detail: check?.detail || ''
+    };
+  };
+
+  const formatCheckName = (name) => {
+    if (name === 'systemMemory') return 'System Memory';
+    if (name === 'cache') return 'API Cache';
+    return name.charAt(0).toUpperCase() + name.slice(1);
   };
 
   return (
@@ -680,8 +699,10 @@ const Settings = () => {
                 )}
               </Box>
               <List>
-                {systemHealth?.checks && typeof systemHealth.checks === 'object' ? 
-                  Object.entries(systemHealth.checks).map(([name, status]) => (
+                {systemHealth?.checks && typeof systemHealth.checks === 'object' ?
+                  Object.entries(systemHealth.checks).map(([name, rawCheck]) => {
+                    const check = normalizeHealthCheck(rawCheck);
+                    return (
                     <ListItem key={name} sx={{ 
                       p: 2, 
                       mb: 1, 
@@ -690,22 +711,23 @@ const Settings = () => {
                       border: `1px solid ${theme.palette.divider}`
                     }}>
                       <ListItemText
-                        primary={name.charAt(0).toUpperCase() + name.slice(1)}
-                        secondary={`Status: ${status}`}
+                        primary={`${formatCheckName(name)}${check.value ? `: ${check.value}` : ''}`}
+                        secondary={check.detail || `Status: ${check.status}`}
                         primaryTypographyProps={{ fontWeight: 600, color: 'text.primary' }}
                         secondaryTypographyProps={{ color: 'text.secondary' }}
                       />
                       <ListItemSecondaryAction>
                         <Chip
-                          icon={getHealthStatusIcon(status)}
-                          label={(status || 'unknown').toUpperCase()}
-                          color={getHealthStatusColor(status)}
+                          icon={getHealthStatusIcon(check.status)}
+                          label={(check.status || 'unknown').toUpperCase()}
+                          color={getHealthStatusColor(check.status)}
                           size="small"
                           variant="outlined"
                         />
                       </ListItemSecondaryAction>
                     </ListItem>
-                  ))
+                  );
+                  })
                   : 
                   <ListItem sx={{ 
                     p: 2, 

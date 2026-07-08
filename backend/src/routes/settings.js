@@ -8,7 +8,7 @@
     const recordRetention = require('../services/recordRetention');
     const { getStorageConfig, updateStorageConfig } = require('../services/storageConfig');
     const storageCleanup = require('../services/storageCleanup');
-    const { getSystemStatus } = require('../utils/systemMetrics');
+    const { getSystemStatus, buildSystemHealth } = require('../utils/systemMetrics');
 
     router.use(requireAuth);
     router.use(checkMenuAccess('settings'));
@@ -172,29 +172,7 @@
         }
 
         const metrics = getSystemStatus(getBufferStats);
-        const heapUsedMB = metrics.memory.process.heapUsedMB;
-        const systemUsedPercent = metrics.memory.system.usedPercent;
-        const storageMB = metrics.storage.total.mb;
-
-        const health = {
-            status: 'healthy',
-            timestamp: new Date().toISOString(),
-            checks: {
-                database: 'healthy',
-                memory: heapUsedMB < 800 ? 'healthy' : (heapUsedMB < 1200 ? 'warning' : 'error'),
-                systemMemory: systemUsedPercent < 85 ? 'healthy' : (systemUsedPercent < 95 ? 'warning' : 'error'),
-                storage: storageMB < 2048 ? 'healthy' : (storageMB < 5120 ? 'warning' : 'error'),
-                uptime: process.uptime() > 0 ? 'healthy' : 'error'
-            }
-        };
-
-        if (Object.values(health.checks).includes('error')) {
-            health.status = 'error';
-        } else if (Object.values(health.checks).includes('warning')) {
-            health.status = 'warning';
-        }
-
-        res.json(health);
+        res.json(buildSystemHealth(metrics));
     }));
 
     // Export settings

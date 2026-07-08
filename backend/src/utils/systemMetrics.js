@@ -70,6 +70,130 @@ function resolveProjectPaths() {
   };
 }
 
+function formatSizeMB(mb) {
+  if (!Number.isFinite(mb)) return '0 MB';
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  return `${mb.toFixed(1)} MB`;
+}
+
+function getHostDiskUsage(targetPath) {
+  if (!targetPath || !fs.existsSync(targetPath)) {
+    return null;
+  }
+
+  try {
+    if (typeof fs.statfsSync !== 'function') {
+      return null;
+    }
+
+    const stat = fs.statfsSync(targetPath);
+    const total = stat.bsize * stat.blocks;
+    const free = stat.bsize * stat.bavail;
+    const used = Math.max(0, total - free);
+
+    return {
+      total,
+      free,
+      used,
+      totalMB: bytesToMB(total),
+      freeMB: bytesToMB(free),
+      usedMB: bytesToMB(used),
+      usedPercent: total > 0 ? Math.round((used / total) * 100) : 0,
+      freePercent: total > 0 ? Math.round((free / total) * 100) : 0
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function formatUptimeSeconds(seconds) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+function buildHealthCheck(status, value, detail) {
+  return { status, value, detail };
+}
+
+function buildSystemHealth(metrics) {
+  const heapUsedMB = metrics.memory.process.heapUsedMB;
+  const systemUsedPercent = metrics.memory.system.usedPercent;
+  const appStorageMB = metrics.storage.total.mb;
+  const disk = metrics.disk;
+  const cacheEntries = metrics.cache?.activeEntries ?? 0;
+
+  const memoryStatus = heapUsedMB < 800 ? 'healthy' : (heapUsedMB < 1500 ? 'warning' : 'error');
+  const systemMemoryStatus = systemUsedPercent < 85 ? 'healthy' : (systemUsedPercent < 95 ? 'warning' : 'error');
+
+  let storageStatus = 'healthy';
+  let storageDetail = `Database ${formatSizeMB(metrics.storage.database.mb)}, logs ${formatSizeMB(metrics.storage.logs.mb)}`;
+
+  if (disk) {
+    storageDetail = `${formatSizeMB(appStorageMB)} app data · ${disk.freePercent}% disk free (${formatSizeMB(disk.freeMB)} available)`;
+    if (disk.freePercent < 5) {
+      storageStatus = 'error';
+    } else if (disk.freePercent < 15 || appStorageMB >= 20480) {
+      storageStatus = 'warning';
+    }
+  } else if (appStorageMB >= 20480) {
+    storageStatus = 'warning';
+    storageDetail = `${formatSizeMB(appStorageMB)} app data (large dataset)`;
+  }
+
+  const checks = {
+    database: buildHealthCheck(
+      'healthy',
+      formatSizeMB(metrics.storage.database.mb),
+      'SQLite database file size'
+    ),
+    memory: buildHealthCheck(
+      memoryStatus,
+      formatSizeMB(heapUsedMB),
+      `Process heap · ${formatSizeMB(metrics.memory.process.heapTotalMB)} allocated`
+    ),
+    systemMemory: buildHealthCheck(
+      systemMemoryStatus,
+      `${systemUsedPercent}%`,
+      `${formatSizeMB(metrics.memory.system.usedMB)} / ${formatSizeMB(metrics.memory.system.totalMB)} RAM`
+    ),
+    storage: buildHealthCheck(
+      storageStatus,
+      formatSizeMB(appStorageMB),
+      storageDetail
+    ),
+    cache: buildHealthCheck(
+      'healthy',
+      `${cacheEntries} active`,
+      `${metrics.cache?.totalEntries ?? 0} total API cache entries`
+    ),
+    uptime: buildHealthCheck(
+      metrics.uptime > 0 ? 'healthy' : 'error',
+      formatUptimeSeconds(metrics.uptime),
+      'Server process uptime'
+    )
+  };
+
+  let status = 'healthy';
+  if (Object.values(checks).some((check) => check.status === 'error')) {
+    status = 'error';
+  } else if (Object.values(checks).some((check) => check.status === 'warning')) {
+    status = 'warning';
+  }
+
+  return {
+    status,
+    timestamp: new Date().toISOString(),
+    checks,
+    metrics: {
+      appStorageMB,
+      disk
+    }
+  };
+}
 function getStorageBreakdown() {
   const paths = resolveProjectPaths();
   const database = getFileSize(paths.database);
@@ -100,6 +224,7 @@ function getStorageBreakdown() {
 }
 
 function getSystemStatus(getBufferStats) {
+  const paths = resolveProjectPaths();
   const processMemory = process.memoryUsage();
   const systemMemory = {
     total: os.totalmem(),
@@ -138,6 +263,7 @@ function getSystemStatus(getBufferStats) {
       }
     },
     storage: getStorageBreakdown(),
+    disk: getHostDiskUsage(paths.dataDir),
     cache: cache.getStats(),
     buffers: typeof getBufferStats === 'function' ? getBufferStats() : null
   };
@@ -149,5 +275,6 @@ module.exports = {
   getFileSize,
   getStorageBreakdown,
   getSystemStatus,
+  buildSystemHealth,
   resolveProjectPaths
 };
