@@ -15,24 +15,38 @@ const requireManager = (req, res, next) => {
 // Get all device groups
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const groups = await DeviceGroup.findAll({
-      where: { isActive: true },
-      include: [
-        {
-          model: User,
-          as: 'creator',
-          attributes: ['id', 'username', 'firstName', 'lastName']
-        },
-        {
-          model: Device,
-          as: 'devices',
-          attributes: ['id', 'name', 'imei', 'status', 'lastSeen'],
-          required: false
-        }
-      ],
-      order: [['createdAt', 'DESC']]
-    });
-    
+    let groups;
+    try {
+      groups = await DeviceGroup.findAll({
+        where: { isActive: true },
+        include: [
+          {
+            model: User,
+            as: 'creator',
+            attributes: ['id', 'username', 'firstName', 'lastName'],
+            required: false
+          },
+          {
+            model: Device,
+            as: 'devices',
+            attributes: ['id', 'name', 'imei', 'status', 'lastSeen'],
+            required: false
+          }
+        ],
+        order: [['createdAt', 'DESC']]
+      });
+    } catch (includeError) {
+      // Includes can fail on association/schema drift — still return groups so Devices page loads.
+      logger.warn('Device groups include query failed; returning groups without relations', {
+        error: includeError.message
+      });
+      groups = await DeviceGroup.findAll({
+        where: { isActive: true },
+        attributes: ['id', 'name', 'description', 'color', 'isActive', 'createdBy', 'createdAt', 'updatedAt'],
+        order: [['createdAt', 'DESC']]
+      });
+    }
+
     res.json(groups);
   } catch (error) {
     logger.error('Error fetching device groups:', error);

@@ -51,7 +51,10 @@ const DeviceEditDialog = ({ open, device, onClose, onSave }) => {
   const loadGroups = async () => {
     try {
       const groupsData = await apiFetchDeviceGroups();
-      setGroups(groupsData);
+      const groupsArray = Array.isArray(groupsData?.data)
+        ? groupsData.data
+        : (Array.isArray(groupsData) ? groupsData : []);
+      setGroups(groupsArray);
     } catch (error) {
       console.error('Error loading groups:', error);
     }

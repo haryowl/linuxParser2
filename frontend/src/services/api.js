@@ -233,19 +233,31 @@ export function getExportJobDownloadUrl(jobId) {
 }
 
 // Device Group Management API Functions
+// Returns { success, data, message } — never throws (Devices page must load even if groups fail).
 export async function apiFetchDeviceGroups() {
   try {
     const response = await authenticatedFetch(`${BASE_URL}/api/device-groups`);
     const data = await response.json();
-    
+
     if (response.ok) {
-      return data;
-    } else {
-      throw new Error(data.error || 'Failed to fetch device groups');
+      return {
+        success: true,
+        data: Array.isArray(data) ? data : []
+      };
     }
+
+    return {
+      success: false,
+      data: [],
+      message: data.error || 'Failed to fetch device groups'
+    };
   } catch (error) {
     console.error('Error fetching device groups:', error);
-    throw error;
+    return {
+      success: false,
+      data: [],
+      message: 'Network error while fetching device groups'
+    };
   }
 }
 

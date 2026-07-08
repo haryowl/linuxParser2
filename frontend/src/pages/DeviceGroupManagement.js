@@ -85,8 +85,10 @@ const DeviceGroupManagement = () => {
       console.log('📱 Setting devices:', devicesArray.length, 'devices');
       setDevices(devicesArray);
       
-      // Set groups
-      const groupsArray = Array.isArray(groupsData) ? groupsData : [];
+      // Set groups (apiFetchDeviceGroups returns { success, data })
+      const groupsArray = Array.isArray(groupsData?.data)
+        ? groupsData.data
+        : (Array.isArray(groupsData) ? groupsData : []);
       console.log('🏷️ Setting groups:', groupsArray.length, 'groups');
       setGroups(groupsArray);
       

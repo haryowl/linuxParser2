@@ -11,6 +11,8 @@ const { requireAuth } = require('./auth');
 const { checkDeviceAccess, filterDevicesByPermission } = require('../middleware/permissions');
 const { findTrackingRecordsChronological } = require('../utils/recordTimeQuery');
 const logger = require('../utils/logger');
+const { filterExistingDeviceAttributes } = require('../utils/ensureDeviceLocationColumns');
+const { sequelize } = require('../models');
 
 function normalizeCoordinateValue(value, maxAbs) {
     if (value === null || value === undefined) {
@@ -124,9 +126,14 @@ function buildLocationFromDevice(device) {
     };
 }
 
-/** Only request columns that exist on the Device model (avoids 500 after schema drift). */
-function deviceAttributes(desired) {
-    return desired.filter((attr) => Boolean(Device.rawAttributes?.[attr]));
+/** Prefer live SQLite/schema columns over Sequelize model declarations. */
+async function resolveDeviceAttributes(desired) {
+    try {
+        return await filterExistingDeviceAttributes(sequelize, desired);
+    } catch (error) {
+        logger.warn('Falling back to model attributes for Devices query', { error: error.message });
+        return desired.filter((attr) => Boolean(Device.rawAttributes?.[attr]));
+    }
 }
 
 const DEVICE_LIST_ATTRIBUTE_CANDIDATES = [
@@ -187,11 +194,13 @@ router.get('/multi-tracking', requireAuth, filterDevicesByPermission, asyncHandl
     
     let devices;
     let accessibleDeviceImeis = [];
+    const multiTrackingAttributes = await resolveDeviceAttributes(DEVICE_LOCATION_ATTRIBUTE_CANDIDATES);
     
     // Get devices based on user permissions
     if (req.user.role === 'admin') {
         console.log('👑 Admin user - getting all device locations');
         devices = await Device.findAll({
+            attributes: multiTrackingAttributes,
             order: [['lastSeen', 'DESC']],
             limit: 100 // Reduced limit for better performance
         });
@@ -273,6 +282,7 @@ router.get('/multi-tracking', requireAuth, filterDevicesByPermission, asyncHandl
         if (accessibleDeviceImeis.length > 0) {
             devices = await Device.findAll({
                 where: { imei: { [Op.in]: accessibleDeviceImeis } },
+                attributes: multiTrackingAttributes,
                 order: [['lastSeen', 'DESC']],
                 limit: 100 // Reduced limit for better performance
             });
@@ -400,7 +410,7 @@ router.get('/', requireAuth, filterDevicesByPermission, asyncHandler(async (req,
     
     let devices;
     
-    const deviceListAttributes = deviceAttributes(DEVICE_LIST_ATTRIBUTE_CANDIDATES);
+    const deviceListAttributes = await resolveDeviceAttributes(DEVICE_LIST_ATTRIBUTE_CANDIDATES);
 
     // If admin, get all devices with optimized query
     if (req.user.role === 'admin') {
@@ -509,7 +519,7 @@ router.get('/locations', requireAuth, filterDevicesByPermission, asyncHandler(as
         return res.json(cached);
     }
 
-    const locationAttributes = deviceAttributes(DEVICE_LOCATION_ATTRIBUTE_CANDIDATES);
+    const locationAttributes = await resolveDeviceAttributes(DEVICE_LOCATION_ATTRIBUTE_CANDIDATES);
 
     let devices;
     // Reuse permissions resolved by filterDevicesByPermission (null = admin/all)

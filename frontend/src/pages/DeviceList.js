@@ -99,24 +99,45 @@ const DeviceList = () => {
   const { isConnected } = useWebSocketConnection();
   useWebSocket(null, handleWebSocketMessage);
 
-  // Fetch devices and groups from API
+  // Fetch devices and groups independently so group failures never block the device list.
   const fetchData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [devicesResponse, groupsResponse] = await Promise.all([
-        apiFetchDevices(),
-        apiFetchDeviceGroups()
+    setLoading(true);
+    setError(null);
+
+    const FETCH_TIMEOUT_MS = 45000;
+    const withTimeout = (promise, label) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} timed out`)), FETCH_TIMEOUT_MS)
+        )
       ]);
-      
-      if (devicesResponse.success) {
-        setDevices(devicesResponse.data || []);
+
+    try {
+      const [devicesResult, groupsResult] = await Promise.allSettled([
+        withTimeout(apiFetchDevices(), 'Devices'),
+        withTimeout(apiFetchDeviceGroups(), 'Device groups')
+      ]);
+
+      if (devicesResult.status === 'fulfilled' && devicesResult.value?.success) {
+        setDevices(devicesResult.value.data || []);
       } else {
-        setError(devicesResponse.message || 'Failed to fetch devices');
+        const message =
+          devicesResult.status === 'fulfilled'
+            ? (devicesResult.value?.message || 'Failed to fetch devices')
+            : (devicesResult.reason?.message || 'Failed to fetch devices');
+        setError(message);
+        console.error('Error fetching devices:', devicesResult);
       }
-      
-      if (groupsResponse) {
-        setGroups(groupsResponse);
+
+      if (groupsResult.status === 'fulfilled' && groupsResult.value?.success) {
+        setGroups(groupsResult.value.data || []);
+      } else if (groupsResult.status === 'fulfilled' && Array.isArray(groupsResult.value)) {
+        // Backward compatibility if API still returns a bare array
+        setGroups(groupsResult.value);
+      } else {
+        setGroups([]);
+        console.warn('Device groups unavailable; continuing with devices only', groupsResult);
       }
     } catch (err) {
       console.error('Error fetching data:', err);

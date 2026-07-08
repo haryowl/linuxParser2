@@ -168,6 +168,7 @@ const { optionalAuth } = require('./middleware/optionalAuth');
 const { rateLimit } = require('./middleware/rateLimiter');
 const { requireAuth } = require('./routes/auth');
 const { resolveAccessibleDeviceImeis } = require('./utils/accessibleDevices');
+const { getDeviceTableColumns } = require('./utils/ensureDeviceLocationColumns');
 const apiRateLimitEnabled = process.env.RATE_LIMIT_ENABLED !== 'false';
 const apiRateLimitMaxRequests = Number.parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100;
 const apiRateLimitWindowMs = Number.parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 900000;
@@ -397,9 +398,9 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
         let activeDevices = 0;
 
         // Avoid full-table COUNT on huge SQLite DBs during login — blocks locations/map.
-        const hasLastGpsColumns = Boolean(
-            Device.rawAttributes?.lastLatitude && Device.rawAttributes?.lastLongitude
-        );
+        // Use live table columns (not Sequelize model attrs) to avoid selecting missing fields.
+        const deviceColumns = await getDeviceTableColumns(sequelize);
+        const hasLastGpsColumns = deviceColumns.has('lastLatitude') && deviceColumns.has('lastLongitude');
 
         if (accessibleImeis === null) {
             totalDevices = await Device.count();
