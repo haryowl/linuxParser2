@@ -4,6 +4,7 @@ const express = require('express');
 const { Device, DeviceCommand, UserDeviceAccess, UserDeviceGroupAccess, DeviceGroup } = require('../models');
 const { Op } = require('sequelize');
 const archiveStatStore = require('../services/archiveStatStore');
+const connectionRegistry = require('../services/connectionRegistry');
 const { requireAuth } = require('./auth');
 const { checkDeviceAccess } = require('../middleware/permissions');
 const { getCommandList } = require('../services/commandList');
@@ -282,9 +283,15 @@ router.get('/queue/stats', requireAuth, async (req, res) => {
 
 router.get('/archivestat', requireAuth, async (req, res) => {
     try {
-        const allStats = archiveStatStore.getAllStats();
+        const allStats = await archiveStatStore.getAllStats();
+        const connectedImeis = new Set(connectionRegistry.getConnectedImeis() || []);
+        const enriched = allStats.map((item) => ({
+            ...item,
+            isConnected: connectedImeis.has(item.imei)
+        }));
+
         if (req.user.role === 'admin') {
-            return res.json(allStats);
+            return res.json(enriched);
         }
 
         const imeis = await getAccessibleImeis(req.user);
@@ -292,7 +299,7 @@ router.get('/archivestat', requireAuth, async (req, res) => {
             return res.json([]);
         }
 
-        const filtered = allStats.filter(item => imeis.includes(item.imei));
+        const filtered = enriched.filter((item) => imeis.includes(item.imei));
         res.json(filtered);
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch archive stats' });

@@ -16,6 +16,8 @@ const config = require('./config');
 const { app, tcpServer } = require('./app');
 const { ensureRecordIndexes } = require('./utils/ensureRecordIndexes');
 const { ensureDeviceLocationColumns } = require('./utils/ensureDeviceLocationColumns');
+const { ensureDeviceArchiveStatTable } = require('./utils/ensureDeviceArchiveStatTable');
+const archiveStatStore = require('./services/archiveStatStore');
 const recordRetention = require('./services/recordRetention');
 const { buildSequelizeOptions } = require('./config/database');
 
@@ -56,6 +58,8 @@ async function startServer() {
 
         await ensureRecordIndexes(sequelize);
         await ensureDeviceLocationColumns(sequelize);
+        await ensureDeviceArchiveStatTable(sequelize);
+        await archiveStatStore.loadFromDatabase();
 
         const dbConfig = buildSequelizeOptions();
         if (!dbConfig.url) {

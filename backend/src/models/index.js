@@ -14,6 +14,7 @@ const defineUserDeviceAccess = require('./userDeviceAccess');
 const defineUserDeviceGroupAccess = require('./userDeviceGroupAccess');
 const defineRole = require('./role');
 const defineDeviceCommand = require('./deviceCommand');
+const defineDeviceArchiveStat = require('./deviceArchiveStat');
 
 const { buildSequelizeOptions } = require('../config/database');
 
@@ -34,6 +35,7 @@ const UserDeviceAccess = defineUserDeviceAccess(sequelize);
 const UserDeviceGroupAccess = defineUserDeviceGroupAccess(sequelize);
 const Role = defineRole(sequelize);
 const DeviceCommand = defineDeviceCommand(sequelize);
+const DeviceArchiveStat = defineDeviceArchiveStat(sequelize);
 
 // Setup associations
 Device.hasMany(FieldMapping, {
@@ -192,5 +194,6 @@ module.exports = {
     UserDeviceAccess,
     UserDeviceGroupAccess,
     Role,
-    DeviceCommand
+    DeviceCommand,
+    DeviceArchiveStat
 };

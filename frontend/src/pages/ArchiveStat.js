@@ -38,10 +38,10 @@ const ArchiveStat = () => {
       const index = prev.findIndex(item => item.imei === incoming.imei);
       if (index >= 0) {
         const next = [...prev];
-        next[index] = { ...next[index], ...incoming };
+        next[index] = { ...next[index], ...incoming, isConnected: true };
         return next;
       }
-      return [incoming, ...prev];
+      return [{ ...incoming, isConnected: true }, ...prev];
     });
   }, []);
 
@@ -55,12 +55,16 @@ const ArchiveStat = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Typography variant="h4" sx={{ mb: 2 }}>Archive Stat</Typography>
+      <Typography variant="h4" sx={{ mb: 1 }}>Archive Stat</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Last known archive queue status per device. Data is kept after disconnect and server restart.
+      </Typography>
       <TableContainer component={Paper}>
         <Table size="small">
           <TableHead>
             <TableRow>
               <TableCell>Device Name</TableCell>
+              <TableCell>Status</TableCell>
               <TableCell>Serv1 Data Transmitted</TableCell>
               <TableCell>Serv1 Data Queue</TableCell>
               <TableCell>Serv2 Data Transmitted</TableCell>
@@ -72,6 +76,14 @@ const ArchiveStat = () => {
             {stats.map(row => (
               <TableRow key={row.imei}>
                 <TableCell>{row.deviceName || row.imei}</TableCell>
+                <TableCell>
+                  <Chip
+                    size="small"
+                    label={row.isConnected ? 'Online' : 'Offline'}
+                    color={row.isConnected ? 'primary' : 'default'}
+                    variant={row.isConnected ? 'filled' : 'outlined'}
+                  />
+                </TableCell>
                 <TableCell>{row.serv1Transmitted ?? '-'}</TableCell>
                 <TableCell>
                   {row.serv1Queue ?? '-'}
@@ -101,7 +113,7 @@ const ArchiveStat = () => {
             ))}
             {stats.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6}>
+                <TableCell colSpan={7}>
                   <Typography color="text.secondary">No archive stats yet.</Typography>
                 </TableCell>
               </TableRow>
