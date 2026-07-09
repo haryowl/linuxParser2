@@ -98,6 +98,7 @@ const Tracking = () => {
   const [showSpeedColors, setShowSpeedColors] = useState(false);
   const [mapDecimationInfo, setMapDecimationInfo] = useState(null);
   const [serverTruncated, setServerTruncated] = useState(false);
+  const [mapPointMode, setMapPointMode] = useState('optimized'); // 'optimized' | 'all'
 
   // Load devices
   useEffect(() => {
@@ -224,10 +225,16 @@ const Tracking = () => {
     }
   };
 
-  const mapTrack = useMemo(
-    () => decimateTrackPoints(trackingData, MAX_MAP_POINTS),
-    [trackingData]
-  );
+  const mapTrack = useMemo(() => {
+    if (mapPointMode === 'all') {
+      return {
+        points: trackingData,
+        decimated: false,
+        originalCount: trackingData.length
+      };
+    }
+    return decimateTrackPoints(trackingData, MAX_MAP_POINTS);
+  }, [trackingData, mapPointMode]);
 
   useEffect(() => {
     if (mapTrack.decimated) {
@@ -424,9 +431,22 @@ const Tracking = () => {
               </Alert>
             )}
 
-            {mapDecimationInfo && (
+            {mapDecimationInfo && mapPointMode === 'optimized' && (
               <Alert severity="info" sx={{ mb: 2 }}>
-                Map displays {mapDecimationInfo.displayed} of {mapDecimationInfo.original} points for smoother rendering.
+                Map displays {mapDecimationInfo.displayed.toLocaleString()} of {mapDecimationInfo.original.toLocaleString()} points for smoother rendering.
+                Switch to &quot;All points&quot; below to draw every loaded point.
+              </Alert>
+            )}
+
+            {mapPointMode === 'all' && trackingData.length > 0 && (
+              <Alert
+                severity={trackingData.length > MAX_MAP_POINTS ? 'warning' : 'info'}
+                sx={{ mb: 2 }}
+              >
+                Map displays all {trackingData.length.toLocaleString()} loaded points.
+                {trackingData.length > MAX_MAP_POINTS
+                  ? ' Large tracks may slow pan/zoom on this device.'
+                  : ''}
               </Alert>
             )}
             
@@ -606,6 +626,46 @@ const Tracking = () => {
                   </Typography>
                 </Alert>
               )}
+            </Box>
+
+            {/* Map display options */}
+            <Box sx={{ mt: 3, p: 2, border: '1px solid #e0e0e0', borderRadius: 1, backgroundColor: '#fafafa' }}>
+              <Typography variant="h6" gutterBottom>
+                Map Display Options
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Choose how many GPS points are drawn on the track map after loading
+              </Typography>
+
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} md={4}>
+                  <FormControl fullWidth>
+                    <InputLabel>Map Points</InputLabel>
+                    <Select
+                      value={mapPointMode}
+                      onChange={(e) => setMapPointMode(e.target.value)}
+                      label="Map Points"
+                    >
+                      <MenuItem value="optimized">
+                        Optimized (max {MAX_MAP_POINTS.toLocaleString()} points)
+                      </MenuItem>
+                      <MenuItem value="all">
+                        All loaded points
+                      </MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+
+                <Grid item xs={12} md={8}>
+                  <Typography variant="body2" color="text.secondary">
+                    {mapPointMode === 'optimized'
+                      ? `Draws up to ${MAX_MAP_POINTS.toLocaleString()} evenly spaced points for smooth map performance.`
+                      : trackingData.length > 0
+                        ? `Will draw all ${trackingData.length.toLocaleString()} points currently loaded (after GPS filtering).`
+                        : 'Will draw every point returned for the selected date range.'}
+                  </Typography>
+                </Grid>
+              </Grid>
             </Box>
           </Paper>
         </Grid>
