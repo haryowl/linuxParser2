@@ -33,6 +33,7 @@ import {
   Map as MapIcon,
   Settings as SettingsIcon,
   Notifications as NotificationsIcon,
+  TableChart as TableChartIcon,
   LocationOn as LocationIcon,
   Science as ScienceIcon,
   AccountCircle as AccountIcon,
