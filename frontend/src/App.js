@@ -21,7 +21,6 @@ import Tracking from './pages/Tracking';
 import MultiTracking from './pages/MultiTracking';
 import Settings from './pages/Settings';
 import Alerts from './pages/Alerts';
-import DataTablePage from './pages/DataTable';
 import DeviceGroupManagement from './pages/DeviceGroupManagement';
 
 const DeviceDetail = lazy(() => import('./pages/DeviceDetail'));
@@ -120,11 +119,7 @@ function AppContent() {
                       <Layout><Alerts /></Layout>
                     </ProtectedRoute>
                   } />
-                  <Route path="/data" element={
-                    <ProtectedRoute requiredPermission="data">
-                      <Layout><DataTablePage /></Layout>
-                    </ProtectedRoute>
-                  } />
+                  <Route path="/data" element={<Navigate to="/export" replace />} />
                   <Route path="/export" element={
                     <ProtectedRoute requiredPermission="export">
                       <Layout><LazyPage><DataExport /></LazyPage></Layout>

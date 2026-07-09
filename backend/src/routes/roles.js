@@ -200,7 +200,6 @@ router.get('/permissions/available', requireAuth, requireAdmin, async (req, res)
         { value: 'mapping', label: 'Mapping', description: 'Access to field mapping' },
         { value: 'tracking', label: 'Tracking', description: 'Access to location tracking' },
         { value: 'multi-tracking', label: 'Multi Tracking', description: 'Access to multi-device tracking' },
-        { value: 'data', label: 'Data Table', description: 'Access to data viewing' },
         { value: 'alerts', label: 'Alerts', description: 'Access to alert management' },
         { value: 'settings', label: 'Settings', description: 'Access to system settings' },
         { value: 'user-management', label: 'User Management', description: 'Access to user management' },
@@ -214,7 +213,6 @@ router.get('/permissions/available', requireAuth, requireAdmin, async (req, res)
         { value: 'users', label: 'Users', description: 'User management operations' },
         { value: 'roles', label: 'Roles', description: 'Role management operations' },
         { value: 'alerts', label: 'Alerts', description: 'Alert management operations' },
-        { value: 'data', label: 'Data', description: 'Data access operations' },
         { value: 'export', label: 'Export', description: 'Data export operations' }
       ],
       special: [

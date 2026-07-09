@@ -236,7 +236,6 @@ const UserManagement = () => {
     { value: 'devices', label: 'Devices' },
     { value: 'mapping', label: 'Mapping' },
     { value: 'tracking', label: 'Tracking' },
-    { value: 'data', label: 'Data Table' },
     { value: 'alerts', label: 'Alerts' },
     { value: 'settings', label: 'Settings' },
     { value: 'export', label: 'Data Export' },

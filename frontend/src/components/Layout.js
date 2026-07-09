@@ -33,7 +33,6 @@ import {
   Map as MapIcon,
   Settings as SettingsIcon,
   Notifications as NotificationsIcon,
-  TableChart as TableChartIcon,
   LocationOn as LocationIcon,
   Science as ScienceIcon,
   AccountCircle as AccountIcon,
@@ -158,13 +157,6 @@ const Layout = ({ children }) => {
       description: 'Multi-device location tracking',
       permission: 'multi-tracking',
       adminOnly: false
-    },
-    { 
-      text: 'Data Table', 
-      icon: <TableChartIcon />, 
-      path: '/data',
-      description: 'View and analyze data',
-      permission: 'data'
     },
     { 
       text: 'Alerts', 
