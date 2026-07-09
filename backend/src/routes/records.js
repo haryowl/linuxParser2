@@ -230,9 +230,29 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
         ];
         const availableAttributes = desiredAttributes.filter(attr => Record.rawAttributes[attr]);
 
+        let queryOrder = effectiveTimeOrderDesc();
+        if (isPaginated) {
+            // Export preview: skip empty heartbeat rows and sort by server receive time.
+            // datetime DESC NULLS FIRST was surfacing hundreds of thousands of null-only rows.
+            const meaningfulClause = {
+                [Op.or]: [
+                    { latitude: { [Op.ne]: null } },
+                    { datetime: { [Op.ne]: null } },
+                    { recordNumber: { [Op.ne]: null } },
+                    { speed: { [Op.ne]: null } }
+                ]
+            };
+            if (where[Op.and]) {
+                where[Op.and] = [...where[Op.and], meaningfulClause];
+            } else {
+                where[Op.and] = [meaningfulClause];
+            }
+            queryOrder = [['timestamp', 'DESC'], ['id', 'DESC']];
+        }
+
         const records = await Record.findAll({
             where,
-            order: effectiveTimeOrderDesc(),
+            order: queryOrder,
             limit: queryLimit,
             offset: isPaginated ? queryOffset : 0,
             attributes: availableAttributes
