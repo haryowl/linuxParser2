@@ -282,8 +282,12 @@ class MobileOptimizer {
   async compressDatabase() {
     try {
       const { sequelize } = require('../models');
-      
-      // Run SQLite VACUUM to compress database
+      const { resolveDialect } = require('../config/database');
+
+      if (resolveDialect() !== 'sqlite') {
+        return;
+      }
+
       await sequelize.query('VACUUM');
       logger.info('Database compressed');
     } catch (error) {

@@ -5,6 +5,7 @@ const alertManager = require('../services/alertManager');
 const { Alert, AlertRule, sequelize } = require('../models'); // Import models and sequelize
 const asyncHandler = require('../utils/asyncHandler'); // Import asyncHandler
 const { Op } = require('sequelize'); // Import Op for operators
+const { dateGroupExpression } = require('../utils/sqlDialect');
 
 // Get all alerts
 router.get('/', asyncHandler(async (req, res) => {
@@ -32,9 +33,10 @@ router.get('/stats', asyncHandler(async (req, res) => {
     // Get alerts over time (last 7 days)
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const dateBucket = dateGroupExpression(sequelize, 'createdAt');
     const alertsOverTime = await Alert.findAll({
         attributes: [
-            [sequelize.fn('strftime', '%Y-%m-%d', sequelize.col('createdAt')), 'date'],
+            [dateBucket, 'date'],
             [sequelize.fn('COUNT', sequelize.col('id')), 'count']
         ],
         where: {
@@ -42,8 +44,8 @@ router.get('/stats', asyncHandler(async (req, res) => {
                 [Op.gte]: sevenDaysAgo
             }
         },
-        group: [sequelize.fn('strftime', '%Y-%m-%d', sequelize.col('createdAt'))],
-        order: [[sequelize.fn('strftime', '%Y-%m-%d', sequelize.col('createdAt')), 'ASC']]
+        group: [dateBucket],
+        order: [[dateBucket, 'ASC']]
     });
 
     // Get top triggers

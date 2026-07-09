@@ -1,3 +1,12 @@
+# LinuxParserPG — Galileosky GPS (PostgreSQL)
+
+PostgreSQL edition of the Galileosky GPS stack. Use [linuxParser2](https://github.com/haryowl/linuxParser2) for the SQLite production build.
+
+**Deploy guide:** see [POSTGRES_DEPLOY.md](POSTGRES_DEPLOY.md)  
+**Default server:** `62.84.189.162` — configure in `env.production` from `env.production.postgres.example`
+
+---
+
 # LinuxParser - Galileosky GPS Tracking Parser
 
 A production-ready GPS tracking parser for Galileosky devices with web dashboard, real-time monitoring, and data export capabilities.
