@@ -32,7 +32,21 @@ class PostgresSessionStore {
         `);
 
         logger.info('Postgres sessions table created/verified successfully');
-        await this.cleanupExpiredSessions();
+        await this.runCleanupExpiredSessions();
+    }
+
+    async runCleanupExpiredSessions() {
+        if (!this.sequelize) {
+            return;
+        }
+
+        const [, metadata] = await this.sequelize.query(
+            `DELETE FROM sessions WHERE "lastAccessed" < (CURRENT_TIMESTAMP - INTERVAL '24 hours')`
+        );
+        const count = metadata?.rowCount || 0;
+        if (count > 0) {
+            logger.info('Cleaned up expired sessions', { count });
+        }
     }
 
     async set(token, session) {
@@ -137,13 +151,7 @@ class PostgresSessionStore {
 
     async cleanupExpiredSessions() {
         await this.ready;
-        const [, metadata] = await this.sequelize.query(
-            `DELETE FROM sessions WHERE "lastAccessed" < (CURRENT_TIMESTAMP - INTERVAL '24 hours')`
-        );
-        const count = metadata?.rowCount || 0;
-        if (count > 0) {
-            logger.info('Cleaned up expired sessions', { count });
-        }
+        await this.runCleanupExpiredSessions();
     }
 
     async getSessionCount() {
