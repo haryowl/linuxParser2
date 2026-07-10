@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const cache = require('./cache');
+const { resolveDialect, isPostgresDialect } = require('../config/database');
 
 function bytesToMB(bytes) {
   return Math.round((bytes / (1024 * 1024)) * 100) / 100;
@@ -144,11 +145,28 @@ function buildSystemHealth(metrics) {
     storageDetail = `${formatSizeMB(appStorageMB)} app data (large dataset)`;
   }
 
+  const dbDialect = metrics.storage.database?.dialect || 'sqlite';
+  const dbDetail = dbDialect === 'postgres'
+    ? [
+        metrics.storage.database.name || 'PostgreSQL',
+        metrics.storage.database.recordCount != null
+          ? `${Number(metrics.storage.database.recordCount).toLocaleString('en-US')} records`
+          : null,
+        metrics.storage.database.deviceCount != null
+          ? `${Number(metrics.storage.database.deviceCount).toLocaleString('en-US')} devices`
+          : null
+      ].filter(Boolean).join(' · ')
+    : 'SQLite database file size';
+
+  const dbStatus = dbDialect === 'postgres' && metrics.storage.database.exists === false
+    ? 'error'
+    : 'healthy';
+
   const checks = {
     database: buildHealthCheck(
-      'healthy',
+      dbStatus,
       formatSizeMB(metrics.storage.database.mb),
-      'SQLite database file size'
+      dbDetail
     ),
     memory: buildHealthCheck(
       memoryStatus,
@@ -194,9 +212,56 @@ function buildSystemHealth(metrics) {
     }
   };
 }
-function getStorageBreakdown() {
+async function getPostgresDatabaseStats() {
+  try {
+    const { sequelize } = require('../models');
+    const [rows] = await sequelize.query(`
+      SELECT
+        pg_database_size(current_database())::bigint AS db_bytes,
+        current_database() AS db_name,
+        (SELECT COUNT(*)::bigint FROM "Records") AS record_count,
+        (SELECT COUNT(*)::bigint FROM "Devices") AS device_count
+    `);
+    const row = rows[0] || {};
+    const bytes = Number(row.db_bytes) || 0;
+
+    return {
+      bytes,
+      exists: true,
+      path: row.db_name || 'PostgreSQL',
+      dialect: 'postgres',
+      name: row.db_name || null,
+      recordCount: Number(row.record_count) || 0,
+      deviceCount: Number(row.device_count) || 0,
+      mb: bytesToMB(bytes)
+    };
+  } catch (error) {
+    return {
+      bytes: 0,
+      exists: false,
+      path: 'PostgreSQL',
+      dialect: 'postgres',
+      error: error.message,
+      mb: 0
+    };
+  }
+}
+
+async function getStorageBreakdown() {
   const paths = resolveProjectPaths();
-  const database = getFileSize(paths.database);
+  let database;
+
+  if (isPostgresDialect(resolveDialect())) {
+    database = await getPostgresDatabaseStats();
+  } else {
+    const fileSize = getFileSize(paths.database);
+    database = {
+      ...fileSize,
+      mb: bytesToMB(fileSize.bytes),
+      dialect: 'sqlite'
+    };
+  }
+
   const backendLogs = getDirectorySize(paths.backendLogs);
   const pm2Logs = getDirectorySize(paths.pm2Logs);
   const exportsDir = getDirectorySize(paths.exports);
@@ -208,7 +273,7 @@ function getStorageBreakdown() {
   const totalBytes = database.bytes + logsBytes + exportsDir.bytes + backupsDir.bytes;
 
   return {
-    database: { ...database, mb: bytesToMB(database.bytes) },
+    database,
     logs: {
       bytes: logsBytes,
       mb: bytesToMB(logsBytes),
@@ -223,7 +288,7 @@ function getStorageBreakdown() {
   };
 }
 
-function getSystemStatus(getBufferStats) {
+async function getSystemStatus(getBufferStats) {
   const paths = resolveProjectPaths();
   const processMemory = process.memoryUsage();
   const systemMemory = {
@@ -262,8 +327,8 @@ function getSystemStatus(getBufferStats) {
           : 0
       }
     },
-    storage: getStorageBreakdown(),
-    disk: getHostDiskUsage(paths.dataDir),
+    storage: await getStorageBreakdown(),
+    disk: getHostDiskUsage(paths.projectRoot),
     cache: cache.getStats(),
     buffers: typeof getBufferStats === 'function' ? getBufferStats() : null
   };

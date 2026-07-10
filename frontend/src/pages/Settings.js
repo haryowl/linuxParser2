@@ -828,7 +828,9 @@ const Settings = () => {
                       App Storage
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Database, logs, exports, backups
+                      {systemStatus.storage?.database?.dialect === 'postgres'
+                        ? 'PostgreSQL database, logs, exports, backups'
+                        : 'Database, logs, exports, backups'}
                     </Typography>
                   </Box>
                 </Grid>
@@ -860,7 +862,12 @@ const Settings = () => {
                 <Grid container spacing={2}>
                   <Grid item xs={12} md={4}>
                     <Typography variant="body2" color="text.secondary">
-                      Database: {formatSize(systemStatus.storage?.database?.mb)}
+                      Database
+                      {systemStatus.storage?.database?.dialect === 'postgres' ? ' (PostgreSQL)' : ''}:{' '}
+                      {formatSize(systemStatus.storage?.database?.mb)}
+                      {systemStatus.storage?.database?.recordCount != null && (
+                        <> · {Number(systemStatus.storage.database.recordCount).toLocaleString()} records</>
+                      )}
                     </Typography>
                   </Grid>
                   <Grid item xs={12} md={4}>

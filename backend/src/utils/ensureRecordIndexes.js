@@ -1,7 +1,7 @@
 'use strict';
 
 const logger = require('./logger');
-const { RECORD_INDEXES } = require('./recordIndexDefinitions');
+const { RECORD_INDEXES, RECORD_DEDUP_INDEX } = require('./recordIndexDefinitions');
 
 async function ensureRecordIndexes(sequelize) {
   const queryInterface = sequelize.getQueryInterface();
@@ -19,6 +19,28 @@ async function ensureRecordIndexes(sequelize) {
       }
     }
   }
+
+  await ensureRecordDedupIndex(sequelize);
 }
 
-module.exports = { ensureRecordIndexes, RECORD_INDEXES };
+async function ensureRecordDedupIndex(sequelize) {
+  const dialect = sequelize.getDialect();
+  const sql = RECORD_DEDUP_INDEX.createSql[dialect];
+  if (!sql) {
+    return;
+  }
+
+  try {
+    await sequelize.query(sql);
+    logger.info(`Ensured dedup index ${RECORD_DEDUP_INDEX.name} on Records`);
+  } catch (error) {
+    const message = error?.message || '';
+    if (message.includes('already exists') || message.includes('duplicate')) {
+      logger.debug(`Dedup index ${RECORD_DEDUP_INDEX.name} already exists`);
+      return;
+    }
+    logger.warn(`Could not create dedup index ${RECORD_DEDUP_INDEX.name}: ${message}`);
+  }
+}
+
+module.exports = { ensureRecordIndexes, ensureRecordDedupIndex, RECORD_INDEXES, RECORD_DEDUP_INDEX };

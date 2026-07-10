@@ -157,7 +157,7 @@
             getBufferStats = null;
         }
 
-        const status = getSystemStatus(getBufferStats);
+        const status = await getSystemStatus(getBufferStats);
         res.json(status);
     }));
 
@@ -171,7 +171,7 @@
             getBufferStats = null;
         }
 
-        const metrics = getSystemStatus(getBufferStats);
+        const metrics = await getSystemStatus(getBufferStats);
         res.json(buildSystemHealth(metrics));
     }));
 

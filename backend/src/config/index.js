@@ -55,7 +55,7 @@ const config = {
         maxPacketSize: parseInt(process.env.MAX_PACKET_SIZE) || 1024, // Default to 1024
         validateChecksum: true,
         xteaKey: process.env.GALILEOSKY_XTEA_KEY || null,
-        ackAfterSave: process.env.ACK_AFTER_SAVE === 'true',
+        ackAfterSave: process.env.ACK_AFTER_SAVE !== 'false',
     },
 
     database: {

@@ -11,7 +11,12 @@ const { isNewRecordStart } = require('./galileoskyRecordStream');
 const { GalileoskyBitBuffer, popcount } = require('./galileoskyBitBuffer');
 const { decryptPacketBody } = require('./galileoskyXtea');
 const { extractClientIp } = require('../utils/clientAddress');
-const { Record, Device } = require('../models');
+const { Record, Device, sequelize } = require('../models');
+const {
+    getBulkInsertOptions,
+    getDefaultFlushAckTimeoutMs,
+    isDuplicateKeyError
+} = require('../utils/recordInsertOptions');
 
 class GalileoskyParser extends EventEmitter {
     constructor() {
@@ -131,40 +136,43 @@ class GalileoskyParser extends EventEmitter {
     }
 
     async saveDeviceRecords(imei, deviceRecords) {
-        await this.ensureDeviceExists(imei);
+        return sequelize.transaction(async (transaction) => {
+            await this.ensureDeviceExists(imei, transaction);
 
-        try {
-            await Record.bulkCreate(deviceRecords, {
-                ignoreDuplicates: true,
-                validate: false
-            });
-            await this.updateDeviceLastLocationFromRecords(imei, deviceRecords);
-            logger.debug(`Bulk saved ${deviceRecords.length} records for device ${imei}`);
-            return { saved: deviceRecords.length, failed: 0 };
-        } catch (error) {
-            logger.error(`Error bulk saving records for device ${imei}:`, error);
+            try {
+                await Record.bulkCreate(deviceRecords, getBulkInsertOptions({ transaction }));
+                await this.updateDeviceLastLocationFromRecords(imei, deviceRecords, transaction);
+                logger.debug(`Bulk saved ${deviceRecords.length} records for device ${imei}`);
+                return { saved: deviceRecords.length, failed: 0 };
+            } catch (error) {
+                logger.error(`Error bulk saving records for device ${imei}:`, error);
 
-            let saved = 0;
-            let failed = 0;
-            for (const record of deviceRecords) {
-                try {
-                    await Record.create(record);
-                    saved += 1;
-                } catch (individualError) {
-                    failed += 1;
-                    logger.error(`Failed to save individual record for ${imei}:`, individualError);
+                let saved = 0;
+                let failed = 0;
+                for (const record of deviceRecords) {
+                    try {
+                        await Record.create(record, { transaction });
+                        saved += 1;
+                    } catch (individualError) {
+                        if (isDuplicateKeyError(individualError)) {
+                            saved += 1;
+                            continue;
+                        }
+                        failed += 1;
+                        logger.error(`Failed to save individual record for ${imei}:`, individualError);
+                    }
                 }
-            }
 
-            if (saved > 0) {
-                await this.updateDeviceLastLocationFromRecords(imei, deviceRecords);
-            }
+                if (saved > 0) {
+                    await this.updateDeviceLastLocationFromRecords(imei, deviceRecords, transaction);
+                }
 
-            return { saved, failed };
-        }
+                return { saved, failed };
+            }
+        });
     }
 
-    async updateDeviceLastLocationFromRecords(imei, deviceRecords) {
+    async updateDeviceLastLocationFromRecords(imei, deviceRecords, transaction = null) {
         const gpsRecords = deviceRecords.filter((record) => {
             const lat = Number(record.latitude);
             const lon = Number(record.longitude);
@@ -176,6 +184,10 @@ class GalileoskyParser extends EventEmitter {
         }
 
         const latest = gpsRecords[gpsRecords.length - 1];
+        const updateOptions = { where: { imei } };
+        if (transaction) {
+            updateOptions.transaction = transaction;
+        }
         await Device.update({
             lastLatitude: latest.latitude,
             lastLongitude: latest.longitude,
@@ -185,7 +197,7 @@ class GalileoskyParser extends EventEmitter {
             lastAltitude: latest.altitude ?? null,
             lastSatellites: latest.satellites ?? null,
             lastHdop: latest.hdop ?? null
-        }, { where: { imei } });
+        }, updateOptions);
     }
 
     addRecordToBuffer(recordData) {
@@ -220,11 +232,13 @@ class GalileoskyParser extends EventEmitter {
             ]);
         } catch (error) {
             if (error.message === 'flushBuffer timeout') {
-                logger.warn('Record flush timed out before ACK — ACK sent to avoid device retry storm', {
+                logger.error('Record flush timed out before ACK — no ACK sent, device will retry', {
                     pendingRecords: this.recordBuffer.length,
                     timeoutMs: timeout
                 });
-                return;
+                throw new Error(
+                    `Record flush timed out with ${this.recordBuffer.length} record(s) still buffered`
+                );
             }
             throw error;
         } finally {
@@ -327,9 +341,8 @@ class GalileoskyParser extends EventEmitter {
             );
         }
 
-        if (this.ackAfterSave !== false) {
-            const timeoutMs = parseInt(process.env.FLUSH_ACK_TIMEOUT_MS, 10) || 2000;
-            await this.flushBufferWithTimeout(timeoutMs);
+        if (this.ackAfterSave) {
+            await this.flushBufferWithTimeout(getDefaultFlushAckTimeoutMs());
         }
     }
 
@@ -1781,7 +1794,7 @@ class GalileoskyParser extends EventEmitter {
         };
     }
 
-    async ensureDeviceExists(imei) {
+    async ensureDeviceExists(imei, transaction = null) {
         try {
             // Validate IMEI before database query
             if (!imei || typeof imei !== 'string' || !/^\d{15}$/.test(imei)) {
@@ -1793,21 +1806,27 @@ class GalileoskyParser extends EventEmitter {
                 throw new Error(`Invalid IMEI for device lookup: ${imei}`);
             }
 
-            const [device, created] = await Device.findOrCreate({
+            const findOrCreateOptions = {
                 where: { imei },
                 defaults: {
                     name: `Device ${imei}`,
                     status: 'active',
                     lastSeen: new Date()
                 }
-            });
+            };
+            if (transaction) {
+                findOrCreateOptions.transaction = transaction;
+            }
+
+            const [device, created] = await Device.findOrCreate(findOrCreateOptions);
 
             // Update lastSeen timestamp for existing devices
             if (!created) {
+                const updateOptions = transaction ? { transaction } : {};
                 await device.update({
                     lastSeen: new Date(),
                     status: 'active'
-                });
+                }, updateOptions);
             }
 
             // Emit device update event for frontend
