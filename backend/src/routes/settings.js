@@ -370,4 +370,25 @@
         res.json(summary);
     }));
 
+    const deviceCleanupService = require('../services/deviceCleanupService');
+
+    router.post('/devices/preview-cleanup', requireAdmin, asyncHandler(async (req, res) => {
+        try {
+            const { imeis } = req.body;
+            const preview = await deviceCleanupService.previewDeviceCleanup({ imeis });
+            res.json(preview);
+        } catch (error) {
+            return res.status(400).json({ error: error.message || 'Preview failed' });
+        }
+    }));
+
+    router.post('/devices/cleanup', requireAdmin, asyncHandler(async (req, res) => {
+        try {
+            const result = await deviceCleanupService.cleanupDevices(req.body || {});
+            res.json(result);
+        } catch (error) {
+            return res.status(400).json({ error: error.message || 'Device cleanup failed' });
+        }
+    }));
+
     module.exports = router;

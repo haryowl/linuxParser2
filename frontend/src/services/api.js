@@ -273,6 +273,20 @@ export async function downloadIntegrityExport({ imeis, startDate, endDate }) {
   return response.blob();
 }
 
+export async function previewDeviceCleanup({ imeis }) {
+  return authenticatedFetch(`${BASE_URL}/api/settings/devices/preview-cleanup`, {
+    method: 'POST',
+    body: JSON.stringify({ imeis }),
+  });
+}
+
+export async function cleanupDevices(payload) {
+  return authenticatedFetch(`${BASE_URL}/api/settings/devices/cleanup`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function startAsyncExport(payload) {
   return authenticatedFetch(`${BASE_URL}/api/records/export/async`, {
     method: 'POST',

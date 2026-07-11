@@ -23,6 +23,8 @@ import {
   Chip,
   useTheme,
   MenuItem,
+  Checkbox,
+  FormGroup,
   Table,
   TableBody,
   TableCell,
@@ -73,7 +75,9 @@ import {
   analyzeRecordGaps,
   downloadIntegrityExport,
   fetchIngestAuditStatus,
-  fetchIngestAuditSummary
+  fetchIngestAuditSummary,
+  previewDeviceCleanup,
+  cleanupDevices
 } from '../services/api';
 import DeviceSearchSelect from '../components/DeviceSearchSelect';
 
@@ -173,6 +177,22 @@ const Settings = () => {
   const [dmDeleteDialogOpen, setDmDeleteDialogOpen] = useState(false);
   const [isDmLoading, setIsDmLoading] = useState(false);
   const [isDmDeleting, setIsDmDeleting] = useState(false);
+
+  const [dcPreview, setDcPreview] = useState(null);
+  const [dcDialogOpen, setDcDialogOpen] = useState(false);
+  const [dcConfirmText, setDcConfirmText] = useState('');
+  const [isDcLoading, setIsDcLoading] = useState(false);
+  const [isDcDeleting, setIsDcDeleting] = useState(false);
+  const [dcOptions, setDcOptions] = useState({
+    deleteRecords: true,
+    deleteCommands: true,
+    deleteAudit: true,
+    deleteArchiveStats: true,
+    deleteAlerts: true,
+    deleteMappings: true,
+    deleteUserAccess: true,
+    deleteDevices: true
+  });
 
   const getDataManagementPayload = useCallback(() => {
     // datetime-local values have no timezone; treat them as local wall time.
@@ -305,6 +325,86 @@ const Settings = () => {
       showSnackbar('Failed to load ingest audit summary', 'error');
     } finally {
       setIsDmLoading(false);
+    }
+  };
+
+  const handleDcOptionChange = (key) => (event) => {
+    setDcOptions((prev) => ({ ...prev, [key]: event.target.checked }));
+  };
+
+  const handleDcPreview = async () => {
+    if (!dmImeis?.length) {
+      showSnackbar('Select at least one device IMEI', 'error');
+      return;
+    }
+    setIsDcLoading(true);
+    try {
+      const response = await previewDeviceCleanup({
+        imeis: (dmImeis || []).map((imei) => String(imei).trim())
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setDcPreview(data);
+        const c = data.counts || {};
+        showSnackbar(
+          `Preview: ${c.devices || 0} device(s), ${c.records || 0} records, ${c.commands || 0} commands, ${c.ingestAudit || 0} audit`,
+          'info'
+        );
+      } else {
+        showSnackbar(data.error || 'Device cleanup preview failed', 'error');
+      }
+    } catch (error) {
+      showSnackbar('Device cleanup preview failed', 'error');
+    } finally {
+      setIsDcLoading(false);
+    }
+  };
+
+  const handleDcConfirmCleanup = async () => {
+    if (!dmImeis?.length) {
+      showSnackbar('Select at least one device IMEI', 'error');
+      return;
+    }
+    setIsDcDeleting(true);
+    try {
+      const response = await cleanupDevices({
+        imeis: (dmImeis || []).map((imei) => String(imei).trim()),
+        confirm: true,
+        confirmText: dcConfirmText,
+        ...dcOptions
+      });
+      const data = await response.json();
+      if (response.ok) {
+        const d = data.deleted || {};
+        showSnackbar(
+          `Cleanup done — devices: ${d.devices || 0}, records: ${d.records || 0}, commands: ${d.commands || 0}, audit: ${d.ingestAudit || 0}`,
+          'success'
+        );
+        setDcPreview(null);
+        setDcDialogOpen(false);
+        setDcConfirmText('');
+        setDmPreviewCount(null);
+        setDmGapReport(null);
+        setDmIngestSummary(null);
+        if (dcOptions.deleteDevices) {
+          setDmImeis([]);
+          try {
+            const devicesRes = await fetchDevices();
+            if (devicesRes.ok) {
+              const devicesData = await devicesRes.json();
+              setSettingsDevices(Array.isArray(devicesData) ? devicesData : (devicesData.devices || []));
+            }
+          } catch (refreshError) {
+            console.error('Failed to refresh devices after cleanup:', refreshError);
+          }
+        }
+      } else {
+        showSnackbar(data.error || 'Device cleanup failed', 'error');
+      }
+    } catch (error) {
+      showSnackbar('Device cleanup failed', 'error');
+    } finally {
+      setIsDcDeleting(false);
     }
   };
 
@@ -1540,6 +1640,7 @@ const Settings = () => {
                         setDmPreviewCount(null);
                         setDmGapReport(null);
                         setDmIngestSummary(null);
+                        setDcPreview(null);
                       }}
                     />
                   </Grid>
@@ -1730,6 +1831,99 @@ const Settings = () => {
           </Grid>
         )}
 
+        {isAdmin && (
+          <Grid item xs={12}>
+            <Card sx={{ mt: 1 }}>
+              <CardContent>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                  <DeleteIcon sx={{ mr: 1.5, color: theme.palette.error.main }} />
+                  <Typography variant="h6">Device / Command / Audit Cleanup</Typography>
+                </Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Permanently remove selected devices and related data (no date filter — full history).
+                  Uses the same IMEI selection above. At least one IMEI is required. Type DELETE to confirm.
+                </Typography>
+
+                <FormGroup row sx={{ mb: 2, gap: 1, flexWrap: 'wrap' }}>
+                  <FormControlLabel
+                    control={<Checkbox checked={dcOptions.deleteRecords} onChange={handleDcOptionChange('deleteRecords')} />}
+                    label="Records"
+                  />
+                  <FormControlLabel
+                    control={<Checkbox checked={dcOptions.deleteCommands} onChange={handleDcOptionChange('deleteCommands')} />}
+                    label="Commands"
+                  />
+                  <FormControlLabel
+                    control={<Checkbox checked={dcOptions.deleteAudit} onChange={handleDcOptionChange('deleteAudit')} />}
+                    label="Ingest audit"
+                  />
+                  <FormControlLabel
+                    control={<Checkbox checked={dcOptions.deleteArchiveStats} onChange={handleDcOptionChange('deleteArchiveStats')} />}
+                    label="Archive stats"
+                  />
+                  <FormControlLabel
+                    control={<Checkbox checked={dcOptions.deleteAlerts} onChange={handleDcOptionChange('deleteAlerts')} />}
+                    label="Alerts"
+                  />
+                  <FormControlLabel
+                    control={<Checkbox checked={dcOptions.deleteMappings} onChange={handleDcOptionChange('deleteMappings')} />}
+                    label="Field mappings"
+                  />
+                  <FormControlLabel
+                    control={<Checkbox checked={dcOptions.deleteUserAccess} onChange={handleDcOptionChange('deleteUserAccess')} />}
+                    label="User access"
+                  />
+                  <FormControlLabel
+                    control={<Checkbox checked={dcOptions.deleteDevices} onChange={handleDcOptionChange('deleteDevices')} />}
+                    label="Device rows"
+                  />
+                </FormGroup>
+
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  <Button
+                    variant="outlined"
+                    startIcon={<AssessmentIcon />}
+                    onClick={handleDcPreview}
+                    disabled={isDcLoading || !dmImeis?.length}
+                  >
+                    Preview Device Cleanup
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="error"
+                    startIcon={<DeleteIcon />}
+                    onClick={() => {
+                      setDcConfirmText('');
+                      setDcDialogOpen(true);
+                    }}
+                    disabled={isDcLoading || !dcPreview || !dmImeis?.length}
+                  >
+                    Run Device Cleanup
+                  </Button>
+                </Box>
+
+                {dcPreview && (
+                  <Alert severity="warning" sx={{ mt: 2 }}>
+                    IMEIs: {dcPreview.imeis?.join(', ')}
+                    {dcPreview.missingImeis?.length
+                      ? ` (not found: ${dcPreview.missingImeis.join(', ')})`
+                      : ''}
+                    <br />
+                    Devices: {dcPreview.counts?.devices?.toLocaleString() || 0} |
+                    Records: {dcPreview.counts?.records?.toLocaleString() || 0} |
+                    Commands: {dcPreview.counts?.commands?.toLocaleString() || 0} |
+                    Audit: {dcPreview.counts?.ingestAudit?.toLocaleString() || 0} |
+                    Alerts: {dcPreview.counts?.alerts?.toLocaleString() || 0} |
+                    Mappings: {dcPreview.counts?.mappings?.toLocaleString() || 0} |
+                    Access: {dcPreview.counts?.userAccess?.toLocaleString() || 0} |
+                    Archive stats: {dcPreview.counts?.archiveStats?.toLocaleString() || 0}
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
+
         <Grid item xs={12} md={6}>
           <Card sx={{ mt: 4 }}>
             <CardContent>
@@ -1830,6 +2024,45 @@ const Settings = () => {
           <Button onClick={() => setDmDeleteDialogOpen(false)} disabled={isDmDeleting}>Cancel</Button>
           <Button onClick={handleDmConfirmDelete} variant="contained" color="error" disabled={isDmDeleting}>
             {isDmDeleting ? 'Deleting...' : 'Delete Records'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={dcDialogOpen}
+        onClose={() => !isDcDeleting && setDcDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Confirm Device Cleanup</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mb: 1 }}>
+            This permanently deletes selected related data for {dmImeis?.length || 0} IMEI(s). No date filter — full history.
+          </Typography>
+          {dcPreview && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Devices {dcPreview.counts?.devices || 0}, records {dcPreview.counts?.records || 0},
+              commands {dcPreview.counts?.commands || 0}, audit {dcPreview.counts?.ingestAudit || 0}
+            </Typography>
+          )}
+          <TextField
+            fullWidth
+            label="Type DELETE to confirm"
+            value={dcConfirmText}
+            onChange={(e) => setDcConfirmText(e.target.value)}
+            margin="normal"
+            autoFocus
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDcDialogOpen(false)} disabled={isDcDeleting}>Cancel</Button>
+          <Button
+            onClick={handleDcConfirmCleanup}
+            variant="contained"
+            color="error"
+            disabled={isDcDeleting || dcConfirmText.trim().toUpperCase() !== 'DELETE'}
+          >
+            {isDcDeleting ? 'Cleaning...' : 'Delete Permanently'}
           </Button>
         </DialogActions>
       </Dialog>
