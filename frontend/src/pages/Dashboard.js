@@ -185,7 +185,7 @@ const Dashboard = () => {
                     Total Devices
                   </Typography>
                   <Typography variant="h4" component="div" fontWeight="bold" color="primary.main">
-                    {currentStats.totalDevices}
+                    {Number(currentStats?.totalDevices || 0).toLocaleString()}
                   </Typography>
                 </Box>
                 <Box sx={{ 
@@ -267,7 +267,10 @@ const Dashboard = () => {
                     Total Records
                   </Typography>
                   <Typography variant="h3" component="div" fontWeight="bold" color="info.main">
-                    {currentStats.totalRecords.toLocaleString()}
+                    {Number(currentStats?.totalRecords || 0).toLocaleString()}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {statsRange === 'last24h' ? 'In the last 24 hours' : 'All time (full database)'}
                   </Typography>
                 </Box>
                 <Box sx={{ 

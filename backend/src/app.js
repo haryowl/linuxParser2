@@ -398,12 +398,15 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
         let last24hRecords = 0;
         let activeDevices = 0;
 
-        // Avoid MAX(id) as "total records" — deletes do not lower MAX(id), so the UI never shrinks.
-        const countRecords = async (where = {}) => {
-            if (isPostgres || Object.keys(where).length > 0) {
+        // Prefer real COUNT on Postgres. Avoid MAX(id) — deletes leave gaps so MAX stays high.
+        // Note: Object.keys() ignores Symbol keys (Sequelize Op.*), so never use keys.length to detect filters.
+        const countRecords = async (where = undefined) => {
+            if (isPostgres) {
+                return where ? Record.count({ where }) : Record.count();
+            }
+            if (where) {
                 return Record.count({ where });
             }
-            // SQLite fallback estimate only when counting the full table with no filter
             const [estimateRow] = await sequelize.query(
                 'SELECT MAX(id) AS total FROM "Records"',
                 { type: QueryTypes.SELECT }
@@ -437,8 +440,10 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
                 [Op.or]: [
                     { datetime: { [Op.gte]: oneDayAgo } },
                     {
-                        datetime: null,
-                        timestamp: { [Op.gte]: oneDayAgo }
+                        [Op.and]: [
+                            { datetime: null },
+                            { timestamp: { [Op.gte]: oneDayAgo } }
+                        ]
                     }
                 ]
             });
@@ -470,8 +475,10 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
                 [Op.or]: [
                     { datetime: { [Op.gte]: oneDayAgo } },
                     {
-                        datetime: null,
-                        timestamp: { [Op.gte]: oneDayAgo }
+                        [Op.and]: [
+                            { datetime: null },
+                            { timestamp: { [Op.gte]: oneDayAgo } }
+                        ]
                     }
                 ]
             });
