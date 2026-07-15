@@ -1,9 +1,14 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 
-const maxPacketSize = config.parser.maxPacketSize || 1024;
+// Wire LENGTH field is 15 bits (max 32767). Spec recommends ~1000; many devices exceed that.
+const maxPacketSize = Math.min(
+    Math.max(1, config.parser.maxPacketSize || 32767),
+    32767
+);
 
 const HTTP_PROBE_PATTERN = /^(GET |POST |PUT |HEAD |OPTIONS |DELETE |PATCH |CONNECT |HTTP\/)/;
+const FRAME_HEADERS = new Set([0x01, 0x07, 0x08]);
 
 /**
  * Internet scanners often hit the GPS TCP port with HTTP/TLS/SSH — not Galileosky devices.
@@ -29,6 +34,26 @@ function isProbeTraffic(buffer) {
 
 function previewAscii(buffer, maxLen = 48) {
     return buffer.slice(0, maxLen).toString('ascii').replace(/[^\x20-\x7E]/g, '.');
+}
+
+/**
+ * Find next plausible Galileosky frame start after a bad header.
+ * Avoids waiting forever for an illegal claimed length (device/server ACK deadlock).
+ */
+function findNextFrameStart(buffer, from = 1) {
+    for (let i = from; i < buffer.length; i++) {
+        if (!FRAME_HEADERS.has(buffer[i])) {
+            continue;
+        }
+        if (i + 3 > buffer.length) {
+            return i;
+        }
+        const len = buffer.readUInt16LE(i + 1) & 0x7fff;
+        if (len <= maxPacketSize) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 function buildConfirmation(packet, ackHeader = 0x02) {
@@ -90,20 +115,25 @@ function extractPackets(state, incomingData) {
                 return { packets, rejectConnection: true };
             }
 
-            logger.error('Packet exceeds MAX_PACKET_SIZE, discarding frame without ACK', {
+            // Do NOT wait for the claimed length and do NOT ACK — waiting caused ACK deadlock.
+            // Resync to the next plausible frame header so the TCP stream can continue.
+            logger.error('Packet exceeds MAX_PACKET_SIZE, discarding header and resyncing (no ACK)', {
                 packetType: `0x${packetType.toString(16).padStart(2, '0')}`,
                 actualLength,
-                maxPacketSize
+                maxPacketSize,
+                bufferLength: state.buffer.length
             });
-            if (state.buffer.length < totalLength + 2) {
-                state.unsentData = Buffer.from(state.buffer);
+            const next = findNextFrameStart(state.buffer, 1);
+            if (next < 0) {
+                state.unsentData = Buffer.alloc(0);
                 state.buffer = Buffer.alloc(0);
                 break;
             }
-            state.buffer = state.buffer.slice(totalLength + 2);
+            state.buffer = state.buffer.slice(next);
             continue;
         }
 
+        // Incomplete frame: keep assembling TCP partials until HEAD+LEN+DATA+CRC arrive, then ACK.
         if (state.buffer.length < totalLength + 2) {
             state.unsentData = Buffer.from(state.buffer);
             state.buffer = Buffer.alloc(0);

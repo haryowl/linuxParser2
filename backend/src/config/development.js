@@ -23,7 +23,7 @@ module.exports = {
         format: 'dev'
     },
     parser: {
-        maxPacketSize: 1024,
+        maxPacketSize: parseInt(process.env.MAX_PACKET_SIZE) || 32767,
         validateChecksum: true
     }
 };

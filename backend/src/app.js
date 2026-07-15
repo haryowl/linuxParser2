@@ -50,7 +50,7 @@ const BACKPRESSURE_CONFIG = {
     maxMemoryBuffer: 100 * 1024 * 1024, // 100MB memory buffer
     maxDiskBuffer: 500 * 1024 * 1024,   // 500MB disk buffer
     batchFlushInterval: 1000,            // 1 second batch flush
-    maxPacketSize: 1000,                 // 1000 bytes per packet
+    maxPacketSize: parseInt(process.env.MAX_PACKET_SIZE) || 32767,
     maxConcurrentDevices: 40,            // Support up to 40 devices
     connectionTimeout: 30000,            // 30 seconds timeout
     retryDelay: 5000,                    // 5 seconds retry delay

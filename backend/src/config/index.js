@@ -52,7 +52,9 @@ const config = {
     },
 
     parser: {
-        maxPacketSize: parseInt(process.env.MAX_PACKET_SIZE) || 1024, // Default to 1024
+        // Spec ~1000 bytes; devices often send larger archive frames (LENGTH uses 15 bits, max 32767).
+        // Accept up to wire max so we can parse + ACK and avoid device/server deadlock.
+        maxPacketSize: parseInt(process.env.MAX_PACKET_SIZE) || 32767,
         validateChecksum: true,
         xteaKey: process.env.GALILEOSKY_XTEA_KEY || null,
         ackAfterSave: process.env.ACK_AFTER_SAVE !== 'false',

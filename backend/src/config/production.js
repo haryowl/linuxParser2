@@ -30,7 +30,7 @@ module.exports = {
     },
     parser: {
         validateChecksum: process.env.VALIDATE_CHECKSUM !== 'false',
-        maxPacketSize: parseInt(process.env.MAX_PACKET_SIZE) || 1024,
+        maxPacketSize: parseInt(process.env.MAX_PACKET_SIZE) || 32767,
         timeout: parseInt(process.env.PARSER_TIMEOUT) || 5000,
         retryAttempts: parseInt(process.env.PARSER_RETRY_ATTEMPTS) || 3
     },
