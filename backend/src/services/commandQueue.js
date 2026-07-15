@@ -136,6 +136,18 @@ class CommandQueue {
         const normalizedHex = packetHex.replace(/^0x/i, '').replace(/\s+/g, '');
         const packet = Buffer.from(normalizedHex, 'hex');
         try {
+            // Flip to "sent" before write so a fast device reply can match this row.
+            await command.update({
+                status: 'sent',
+                sentAt: new Date(),
+                lastAttemptAt: new Date(),
+                errorMessage: null,
+                nextAttemptAt: null,
+                commandNumber: Number.isFinite(Number(command.commandNumber))
+                    ? (Number(command.commandNumber) >>> 0)
+                    : command.commandNumber
+            });
+
             logger.info('Sending command packet', {
                 commandId: command.id,
                 imei: command.imei,
@@ -151,14 +163,6 @@ class CommandQueue {
                         resolve();
                     }
                 });
-            });
-
-            await command.update({
-                status: 'sent',
-                sentAt: new Date(),
-                lastAttemptAt: new Date(),
-                errorMessage: null,
-                nextAttemptAt: null
             });
         } catch (error) {
             await this.markFailed(command, error.message || 'Socket write failed');

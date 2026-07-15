@@ -23,8 +23,8 @@ function buildCommandPacket({ imei, deviceNumber = 0, commandNumber, commandText
     }
 
     const effectiveCommandNumber = Number.isFinite(commandNumber)
-        ? commandNumber
-        : Math.floor(Math.random() * 0xFFFFFFFF);
+        ? (commandNumber >>> 0)
+        : Math.floor(Math.random() * 0x7FFFFFFF);
 
     const parts = [];
     const imeiBytes = Buffer.from(imei, 'ascii');

@@ -276,6 +276,18 @@ parser.on('deviceUpdated', (deviceInfo) => {
     });
 });
 
+function normalizeCommandNumber(value) {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return null;
+    }
+    // Galileosky command ids are unsigned 32-bit.
+    return numeric >>> 0;
+}
+
 // Listen for command reply events and update command status
 parser.on('commandReply', async (reply) => {
     try {
@@ -284,20 +296,58 @@ parser.on('commandReply', async (reply) => {
             return;
         }
 
+        const normalizedCommandNumber = normalizeCommandNumber(commandNumber);
         let command = null;
-        if (typeof commandNumber === 'number') {
+
+        // Match sent OR still-queued rows: a fast device reply can arrive before status flips to "sent".
+        const openStatuses = { [Op.in]: ['sent', 'queued'] };
+        if (normalizedCommandNumber !== null) {
             command = await DeviceCommand.findOne({
                 where: {
                     imei,
-                    status: 'sent',
-                    commandNumber
+                    status: openStatuses,
+                    commandNumber: normalizedCommandNumber
                 },
-                order: [['sentAt', 'DESC']]
+                order: [['sentAt', 'DESC'], ['createdAt', 'DESC']]
             });
-        } else {
-            logger.warn('Received command reply without commandNumber; skipping command status update', {
-                imei
+
+            // Fallback for signed/unsigned INTEGER truncation in older rows
+            if (!command && normalizedCommandNumber > 0x7FFFFFFF) {
+                const signed = normalizedCommandNumber - 0x100000000;
+                command = await DeviceCommand.findOne({
+                    where: {
+                        imei,
+                        status: openStatuses,
+                        commandNumber: signed
+                    },
+                    order: [['sentAt', 'DESC'], ['createdAt', 'DESC']]
+                });
+            }
+        }
+
+        // Last resort: newest open command for this IMEI (keeps ARCHIVESTAT replies from sticking on "sent")
+        if (!command) {
+            command = await DeviceCommand.findOne({
+                where: {
+                    imei,
+                    status: openStatuses,
+                    createdAt: { [Op.gte]: new Date(Date.now() - 15 * 60 * 1000) }
+                },
+                order: [['sentAt', 'DESC'], ['createdAt', 'DESC']]
             });
+            if (command) {
+                logger.warn('Command reply matched by recent open command fallback', {
+                    imei,
+                    replyCommandNumber: normalizedCommandNumber,
+                    matchedCommandId: command.id,
+                    matchedCommandNumber: command.commandNumber,
+                    matchedStatus: command.status
+                });
+            } else if (normalizedCommandNumber === null) {
+                logger.warn('Received command reply without commandNumber; no open command to update', {
+                    imei
+                });
+            }
         }
 
         if (command) {

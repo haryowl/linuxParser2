@@ -10,10 +10,11 @@ function buildEffectiveCommandNumber(commandNumber, commandText, payloadHex) {
         ? Number(commandNumber)
         : null;
     if (Number.isFinite(parsed)) {
-        return parsed;
+        return parsed >>> 0;
     }
     if (!payloadHex && commandText) {
-        return Math.floor(Math.random() * 0xFFFFFFFF);
+        // Keep within signed INT4 range used by DeviceCommands.commandNumber (Postgres INTEGER)
+        return Math.floor(Math.random() * 0x7FFFFFFF);
     }
     return null;
 }
@@ -35,15 +36,21 @@ async function createBroadcastCommands(user, devices, options) {
     }
 
     const broadcastId = randomUUID();
-    const effectiveCommandNumber = buildEffectiveCommandNumber(commandNumber, commandText, payloadHex);
+    const sharedCommandNumber = buildEffectiveCommandNumber(commandNumber, commandText, payloadHex);
     const created = [];
 
     for (const device of devices) {
+        // Unique id per device so replies map cleanly (same text, different 0xE0).
+        // If caller forced commandNumber, keep it shared intentionally.
+        const deviceCommandNumber = commandNumber !== undefined && commandNumber !== null && commandNumber !== ''
+            ? sharedCommandNumber
+            : buildEffectiveCommandNumber(undefined, commandText, payloadHex);
+
         const record = await DeviceCommand.create({
             deviceId: device.id,
             imei: device.imei,
             commandText: commandText || null,
-            commandNumber: effectiveCommandNumber,
+            commandNumber: deviceCommandNumber,
             rawPayloadHex: payloadHex || null,
             status: 'queued',
             priority: typeof priority === 'number' ? priority : 5,
@@ -56,14 +63,15 @@ async function createBroadcastCommands(user, devices, options) {
             deviceId: device.id,
             imei: device.imei,
             deviceName: device.name,
-            status: record.status
+            status: record.status,
+            commandNumber: record.commandNumber
         });
     }
 
     return {
         broadcastId,
         commandText: commandText || null,
-        commandNumber: effectiveCommandNumber,
+        commandNumber: sharedCommandNumber,
         totalDevices: created.length,
         items: created
     };

@@ -173,19 +173,27 @@ async function resolveBroadcastTargetDevices(user, { targetType, groupId, device
             throw new Error('groupId is required when targetType is group');
         }
 
-        const group = await DeviceGroup.findByPk(groupId, {
-            include: [{ model: Device, as: 'devices', attributes: ['id', 'imei', 'name'] }]
-        });
+        const group = await DeviceGroup.findByPk(groupId);
         if (!group) {
             throw new Error('Device group not found');
         }
 
+        // Prefer groupId column (same source Device menu uses) over association include.
+        const groupDevices = await Device.findAll({
+            where: { groupId: Number(groupId) },
+            attributes: ['id', 'imei', 'name'],
+            order: [['name', 'ASC']]
+        });
+
         const allowed = [];
-        for (const device of group.devices || []) {
+        for (const device of groupDevices) {
             const access = await resolveDeviceAccess(user, device.id);
             if (access.allowed) {
-                allowed.push(access.device);
+                allowed.push(access.device || device);
             }
+        }
+        if (!allowed.length) {
+            throw new Error(`No accessible devices found in group "${group.name}"`);
         }
         return allowed;
     }
@@ -345,9 +353,10 @@ router.post('/:deviceId/send', requireAuth, checkDeviceAccess, async (req, res) 
         const parsedCommandNumber = commandNumber !== undefined && commandNumber !== null && commandNumber !== ''
             ? Number(commandNumber)
             : null;
+        // Prefer unsigned 32-bit ids that still fit Postgres INTEGER (signed INT4)
         const effectiveCommandNumber = Number.isFinite(parsedCommandNumber)
-            ? parsedCommandNumber
-            : (!payloadHex && commandText ? Math.floor(Math.random() * 0xFFFFFFFF) : null);
+            ? (parsedCommandNumber >>> 0)
+            : (!payloadHex && commandText ? Math.floor(Math.random() * 0x7FFFFFFF) : null);
 
         const commandRecord = await DeviceCommand.create({
             deviceId: device.id,
@@ -395,8 +404,8 @@ router.post('/send-bulk', requireAuth, async (req, res) => {
             }
 
             const effectiveCommandNumber = Number.isFinite(parsedCommandNumber)
-                ? parsedCommandNumber
-                : (!payloadHex && commandText ? Math.floor(Math.random() * 0xFFFFFFFF) : null);
+                ? (parsedCommandNumber >>> 0)
+                : (!payloadHex && commandText ? Math.floor(Math.random() * 0x7FFFFFFF) : null);
 
             const commandRecord = await DeviceCommand.create({
                 deviceId: access.device.id,

@@ -115,19 +115,15 @@ const CommandCenter = () => {
 
   const handleWebSocketMessage = useCallback((message) => {
     if (message.topic !== 'command_reply') return;
-    setHistory(prev => [
-      {
-        id: `reply-${Date.now()}`,
-        status: 'replied',
-        replyText: message.data?.replyText || message.replyText,
-        replyDataHex: message.data?.replyDataHex || message.replyDataHex,
-        commandNumber: message.data?.commandNumber || message.commandNumber,
-        createdAt: new Date().toISOString(),
-        repliedAt: new Date().toISOString()
-      },
-      ...prev
-    ]);
-  }, []);
+    const replyImei = message.data?.imei || message.imei;
+    if (selectedDevice?.imei && replyImei && replyImei !== selectedDevice.imei) {
+      return;
+    }
+    // Reload from API so status/replyText come from DB, not a synthetic stub
+    if (primaryDeviceId) {
+      loadHistory(primaryDeviceId);
+    }
+  }, [selectedDevice, primaryDeviceId, loadHistory]);
 
   useWebSocketMessage(handleWebSocketMessage);
   const { isConnected, send } = useWebSocketConnection();
