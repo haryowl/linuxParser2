@@ -288,6 +288,146 @@ function normalizeCommandNumber(value) {
     return numeric >>> 0;
 }
 
+/** Keep within Postgres INTEGER / DeviceCommands.commandNumber range. */
+function randomInt4CommandNumber() {
+    return Math.floor(Math.random() * 0x7FFFFFFF);
+}
+
+function normalizeCommandText(value) {
+    return typeof value === 'string' ? value.trim().toUpperCase() : '';
+}
+
+function isSystemAutoCommand(commandText) {
+    const text = normalizeCommandText(commandText);
+    return text === 'ARCHIVESTAT' || text.startsWith('OUT ');
+}
+
+/**
+ * ARCHIVESTAT replies are typically "a,b,c,d" (optionally prefixed).
+ * Do not treat arbitrary status text that merely contains digits as ArchiveStat.
+ */
+function parseArchiveStatReply(replyText) {
+    if (typeof replyText !== 'string') {
+        return null;
+    }
+    const trimmed = replyText.trim().replace(/^archivestat\s*:?\s*/i, '');
+    if (!/^\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*$/.test(trimmed)) {
+        return null;
+    }
+    const parts = trimmed.split(/\s*,\s*/).map((value) => Number(value));
+    if (parts.some((value) => !Number.isFinite(value))) {
+        return null;
+    }
+    return parts;
+}
+
+async function findOpenCommandForReply(imei, normalizedCommandNumber, replyText) {
+    const openStatuses = { [Op.in]: ['sent', 'queued'] };
+    const recentSince = new Date(Date.now() - 15 * 60 * 1000);
+    const archiveParts = parseArchiveStatReply(replyText);
+
+    if (normalizedCommandNumber !== null) {
+        let command = await DeviceCommand.findOne({
+            where: {
+                imei,
+                status: openStatuses,
+                commandNumber: normalizedCommandNumber
+            },
+            order: [['sentAt', 'DESC'], ['createdAt', 'DESC']]
+        });
+
+        // Fallback for signed/unsigned INTEGER truncation in older rows
+        if (!command && normalizedCommandNumber > 0x7FFFFFFF) {
+            const signed = normalizedCommandNumber - 0x100000000;
+            command = await DeviceCommand.findOne({
+                where: {
+                    imei,
+                    status: openStatuses,
+                    commandNumber: signed
+                },
+                order: [['sentAt', 'DESC'], ['createdAt', 'DESC']]
+            });
+        }
+
+        if (command) {
+            const matchedSystem = isSystemAutoCommand(command.commandText);
+            // Never cross-wire ArchiveStat <-> user/broadcast replies even if 0xE0 collided.
+            if (archiveParts && !matchedSystem) {
+                logger.warn('Ignoring commandNumber match that would mix ARCHIVESTAT reply into user command', {
+                    imei,
+                    replyCommandNumber: normalizedCommandNumber,
+                    matchedCommandId: command.id,
+                    matchedCommandText: command.commandText
+                });
+            } else if (!archiveParts && normalizeCommandText(command.commandText) === 'ARCHIVESTAT') {
+                logger.warn('Ignoring commandNumber match that would mix user reply into ARCHIVESTAT', {
+                    imei,
+                    replyCommandNumber: normalizedCommandNumber,
+                    matchedCommandId: command.id,
+                    matchedCommandText: command.commandText
+                });
+            } else {
+                return command;
+            }
+        }
+    }
+
+    // Content-aware fallback only — never "newest any open command" (that mixed
+    // auto ARCHIVESTAT replies into Broadcast status / Command Center rows).
+    const recentOpen = await DeviceCommand.findAll({
+        where: {
+            imei,
+            status: openStatuses,
+            createdAt: { [Op.gte]: recentSince }
+        },
+        order: [['sentAt', 'DESC'], ['createdAt', 'DESC']],
+        limit: 20
+    });
+
+    if (archiveParts) {
+        const archiveCommand = recentOpen.find(
+            (row) => normalizeCommandText(row.commandText) === 'ARCHIVESTAT'
+        );
+        if (archiveCommand) {
+            logger.warn('Command reply matched open ARCHIVESTAT by reply content', {
+                imei,
+                replyCommandNumber: normalizedCommandNumber,
+                matchedCommandId: archiveCommand.id,
+                matchedCommandNumber: archiveCommand.commandNumber
+            });
+            return archiveCommand;
+        }
+        return null;
+    }
+
+    const userCommands = recentOpen.filter((row) => !isSystemAutoCommand(row.commandText));
+    if (userCommands.length === 1) {
+        logger.warn('Command reply matched single open user command fallback', {
+            imei,
+            replyCommandNumber: normalizedCommandNumber,
+            matchedCommandId: userCommands[0].id,
+            matchedCommandText: userCommands[0].commandText,
+            matchedCommandNumber: userCommands[0].commandNumber
+        });
+        return userCommands[0];
+    }
+
+    if (normalizedCommandNumber === null) {
+        logger.warn('Received command reply without commandNumber; no safe open command to update', {
+            imei,
+            openUserCommands: userCommands.length
+        });
+    } else {
+        logger.warn('No matching open command for reply; leaving rows unchanged', {
+            imei,
+            replyCommandNumber: normalizedCommandNumber,
+            openUserCommands: userCommands.length,
+            openTotal: recentOpen.length
+        });
+    }
+    return null;
+}
+
 // Listen for command reply events and update command status
 parser.on('commandReply', async (reply) => {
     try {
@@ -297,58 +437,7 @@ parser.on('commandReply', async (reply) => {
         }
 
         const normalizedCommandNumber = normalizeCommandNumber(commandNumber);
-        let command = null;
-
-        // Match sent OR still-queued rows: a fast device reply can arrive before status flips to "sent".
-        const openStatuses = { [Op.in]: ['sent', 'queued'] };
-        if (normalizedCommandNumber !== null) {
-            command = await DeviceCommand.findOne({
-                where: {
-                    imei,
-                    status: openStatuses,
-                    commandNumber: normalizedCommandNumber
-                },
-                order: [['sentAt', 'DESC'], ['createdAt', 'DESC']]
-            });
-
-            // Fallback for signed/unsigned INTEGER truncation in older rows
-            if (!command && normalizedCommandNumber > 0x7FFFFFFF) {
-                const signed = normalizedCommandNumber - 0x100000000;
-                command = await DeviceCommand.findOne({
-                    where: {
-                        imei,
-                        status: openStatuses,
-                        commandNumber: signed
-                    },
-                    order: [['sentAt', 'DESC'], ['createdAt', 'DESC']]
-                });
-            }
-        }
-
-        // Last resort: newest open command for this IMEI (keeps ARCHIVESTAT replies from sticking on "sent")
-        if (!command) {
-            command = await DeviceCommand.findOne({
-                where: {
-                    imei,
-                    status: openStatuses,
-                    createdAt: { [Op.gte]: new Date(Date.now() - 15 * 60 * 1000) }
-                },
-                order: [['sentAt', 'DESC'], ['createdAt', 'DESC']]
-            });
-            if (command) {
-                logger.warn('Command reply matched by recent open command fallback', {
-                    imei,
-                    replyCommandNumber: normalizedCommandNumber,
-                    matchedCommandId: command.id,
-                    matchedCommandNumber: command.commandNumber,
-                    matchedStatus: command.status
-                });
-            } else if (normalizedCommandNumber === null) {
-                logger.warn('Received command reply without commandNumber; no open command to update', {
-                    imei
-                });
-            }
-        }
+        const command = await findOpenCommandForReply(imei, normalizedCommandNumber, replyText);
 
         if (command) {
             await command.update({
@@ -359,14 +448,11 @@ parser.on('commandReply', async (reply) => {
             });
         }
 
-        const trimmedReply = typeof replyText === 'string' ? replyText.trim() : '';
-        const numericParts = trimmedReply ? trimmedReply.match(/\d+/g) : null;
-        const isArchiveStatReply = numericParts && numericParts.length >= 4;
-        if (isArchiveStatReply) {
-            const parts = numericParts.map(value => Number(value));
-            const total = parts[1];
-            const serv1Transmitted = parts[2];
-            const serv2Transmitted = parts[3];
+        const archiveParts = parseArchiveStatReply(replyText);
+        if (archiveParts) {
+            const total = archiveParts[1];
+            const serv1Transmitted = archiveParts[2];
+            const serv2Transmitted = archiveParts[3];
             const serv1Queue = Math.max(total - serv1Transmitted, 0);
             const serv2Queue = Math.max(total - serv2Transmitted, 0);
             const device = await Device.findOne({ where: { imei } });
@@ -387,7 +473,7 @@ parser.on('commandReply', async (reply) => {
             websocketHandler.broadcast('archivestat_update', archivedStats);
 
             if ((serv1Queue < 20 || serv2Queue < 20) && archiveStatStore.shouldSendOut(imei, 300000)) {
-                const commandNumberOut = Math.floor(Math.random() * 0xFFFFFFFF);
+                const commandNumberOut = randomInt4CommandNumber();
                 if (device) {
                     await DeviceCommand.create({
                         deviceId: device.id,

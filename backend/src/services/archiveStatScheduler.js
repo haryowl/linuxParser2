@@ -59,7 +59,8 @@ class ArchiveStatScheduler {
                 continue;
             }
 
-            const commandNumber = Math.floor(Math.random() * 0xFFFFFFFF);
+            // Stay within Postgres INTEGER / DeviceCommands.commandNumber (signed INT4)
+            const commandNumber = Math.floor(Math.random() * 0x7FFFFFFF);
             await DeviceCommand.create({
                 deviceId: device.id,
                 imei: device.imei,
