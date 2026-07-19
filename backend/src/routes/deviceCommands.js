@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { Device, DeviceCommand, UserDeviceAccess, UserDeviceGroupAccess, DeviceGroup } = require('../models');
-const { Op } = require('sequelize');
+const { Op, fn, col } = require('sequelize');
 const archiveStatStore = require('../services/archiveStatStore');
 const connectionRegistry = require('../services/connectionRegistry');
 const { requireAuth } = require('./auth');
@@ -449,22 +449,79 @@ router.get('/archivestat', requireAuth, async (req, res) => {
     try {
         const allStats = await archiveStatStore.getAllStats();
         const connectedImeis = new Set(connectionRegistry.getConnectedImeis() || []);
-        const enriched = allStats.map((item) => ({
+        const connectionEnriched = allStats.map((item) => ({
             ...item,
             isConnected: connectedImeis.has(item.imei)
         }));
 
-        if (req.user.role === 'admin') {
-            return res.json(enriched);
+        let visibleStats = connectionEnriched;
+        if (req.user.role !== 'admin') {
+            const accessibleImeis = await getAccessibleImeis(req.user);
+            if (!accessibleImeis || accessibleImeis.length === 0) {
+                return res.json([]);
+            }
+            visibleStats = connectionEnriched.filter((item) => accessibleImeis.includes(item.imei));
         }
 
-        const imeis = await getAccessibleImeis(req.user);
-        if (!imeis || imeis.length === 0) {
-            return res.json([]);
+        const visibleImeis = visibleStats.map((item) => item.imei);
+        const latestOutByImei = new Map();
+        if (visibleImeis.length > 0) {
+            const latestOutTimes = await DeviceCommand.findAll({
+                where: {
+                    imei: { [Op.in]: visibleImeis },
+                    commandText: 'OUT 3,0'
+                },
+                attributes: [
+                    'imei',
+                    [fn('MAX', col('createdAt')), 'latestCreatedAt']
+                ],
+                group: ['imei'],
+                raw: true
+            });
+            const latestOutConditions = latestOutTimes.map((row) => ({
+                imei: row.imei,
+                createdAt: row.latestCreatedAt
+            }));
+            const outCommands = latestOutConditions.length > 0
+                ? await DeviceCommand.findAll({
+                    where: {
+                        commandText: 'OUT 3,0',
+                        [Op.or]: latestOutConditions
+                    },
+                    attributes: [
+                        'imei',
+                        'status',
+                        'createdAt',
+                        'updatedAt',
+                        'lastAttemptAt',
+                        'sentAt',
+                        'repliedAt'
+                    ],
+                    order: [['createdAt', 'DESC']]
+                })
+                : [];
+            for (const command of outCommands) {
+                if (!latestOutByImei.has(command.imei)) {
+                    latestOutByImei.set(command.imei, command);
+                }
+            }
         }
 
-        const filtered = enriched.filter((item) => imeis.includes(item.imei));
-        res.json(filtered);
+        const enriched = visibleStats.map((item) => {
+            const outCommand = latestOutByImei.get(item.imei);
+            return {
+                ...item,
+                outCommandStatus: outCommand?.status || null,
+                outCommandUpdatedAt: outCommand
+                    ? (outCommand.repliedAt
+                        || outCommand.lastAttemptAt
+                        || outCommand.sentAt
+                        || outCommand.updatedAt
+                        || outCommand.createdAt)
+                    : null
+            };
+        });
+        res.json(enriched);
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch archive stats' });
     }

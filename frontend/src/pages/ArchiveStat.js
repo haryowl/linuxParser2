@@ -16,6 +16,14 @@ import {
 import useWebSocket from '../hooks/useWebSocket';
 import { apiFetchArchiveStats } from '../services/api';
 
+const getCommandStatusColor = (status) => {
+  if (status === 'replied') return 'success';
+  if (status === 'sent') return 'primary';
+  if (status === 'failed') return 'error';
+  if (status === 'queued') return 'warning';
+  return 'default';
+};
+
 const ArchiveStat = () => {
   const [stats, setStats] = useState([]);
 
@@ -69,6 +77,8 @@ const ArchiveStat = () => {
               <TableCell>Serv1 Data Queue</TableCell>
               <TableCell>Serv2 Data Transmitted</TableCell>
               <TableCell>Serv2 Data Queue</TableCell>
+              <TableCell>OUT 3,0 Status</TableCell>
+              <TableCell>OUT Updated</TableCell>
               <TableCell>Updated</TableCell>
             </TableRow>
           </TableHead>
@@ -108,12 +118,25 @@ const ArchiveStat = () => {
                     />
                   )}
                 </TableCell>
+                <TableCell>
+                  <Chip
+                    size="small"
+                    label={row.outCommandStatus ? row.outCommandStatus.toUpperCase() : 'NOT SENT'}
+                    color={getCommandStatusColor(row.outCommandStatus)}
+                    variant={row.outCommandStatus ? 'filled' : 'outlined'}
+                  />
+                </TableCell>
+                <TableCell>
+                  {row.outCommandUpdatedAt
+                    ? new Date(row.outCommandUpdatedAt).toLocaleString()
+                    : '-'}
+                </TableCell>
                 <TableCell>{row.updatedAt ? new Date(row.updatedAt).toLocaleString() : '-'}</TableCell>
               </TableRow>
             ))}
             {stats.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7}>
+                <TableCell colSpan={9}>
                   <Typography color="text.secondary">No archive stats yet.</Typography>
                 </TableCell>
               </TableRow>
