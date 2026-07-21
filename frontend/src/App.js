@@ -29,9 +29,7 @@ const DataSM = lazy(() => import('./pages/DataSM'));
 const OfflineGridDemo = lazy(() => import('./components/OfflineGridDemo'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const RoleManagement = lazy(() => import('./pages/RoleManagement'));
-const CommandCenter = lazy(() => import('./pages/CommandCenter'));
-const BroadcastCommand = lazy(() => import('./pages/BroadcastCommand'));
-const ArchiveStat = lazy(() => import('./pages/ArchiveStat'));
+const Command = lazy(() => import('./pages/Command'));
 
 function PageLoader() {
   return (
@@ -151,21 +149,15 @@ function AppContent() {
                       <Layout><DeviceGroupManagement /></Layout>
                     </ProtectedRoute>
                   } />
-                  <Route path="/command-center" element={
+                  <Route path="/command" element={<Navigate to="/command/archive-stat" replace />} />
+                  <Route path="/command/:tab" element={
                     <ProtectedRoute requiredPermission="devices">
-                      <Layout><LazyPage><CommandCenter /></LazyPage></Layout>
+                      <Layout><LazyPage><Command /></LazyPage></Layout>
                     </ProtectedRoute>
                   } />
-                  <Route path="/broadcast-command" element={
-                    <ProtectedRoute requiredPermission="devices">
-                      <Layout><LazyPage><BroadcastCommand /></LazyPage></Layout>
-                    </ProtectedRoute>
-                  } />
-                  <Route path="/archive-stat" element={
-                    <ProtectedRoute requiredPermission="devices">
-                      <Layout><LazyPage><ArchiveStat /></LazyPage></Layout>
-                    </ProtectedRoute>
-                  } />
+                  <Route path="/command-center" element={<Navigate to="/command/command-center" replace />} />
+                  <Route path="/broadcast-command" element={<Navigate to="/command/broadcast" replace />} />
+                  <Route path="/archive-stat" element={<Navigate to="/command/archive-stat" replace />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </DataProvider>

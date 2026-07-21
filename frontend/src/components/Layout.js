@@ -40,7 +40,6 @@ import {
   Logout as LogoutIcon,
   Person as PersonIcon,
   Satellite as SatelliteIcon,
-  Campaign as CampaignIcon,
   LightMode as LightModeIcon,
   DarkMode as DarkModeIcon,
   People as PeopleIcon,
@@ -74,9 +73,7 @@ const Layout = ({ children }) => {
       import('../pages/DataSM');
       import('../pages/UserManagement');
       import('../pages/RoleManagement');
-      import('../pages/CommandCenter');
-      import('../pages/BroadcastCommand');
-      import('../pages/ArchiveStat');
+      import('../pages/Command');
       import('../pages/DeviceDetail');
     };
     const schedule = window.requestIdleCallback || ((cb) => setTimeout(cb, 1500));
@@ -89,9 +86,10 @@ const Layout = ({ children }) => {
       '/data-sm': () => import('../pages/DataSM'),
       '/user-management': () => import('../pages/UserManagement'),
       '/role-management': () => import('../pages/RoleManagement'),
-      '/command-center': () => import('../pages/CommandCenter'),
-      '/broadcast-command': () => import('../pages/BroadcastCommand'),
-      '/archive-stat': () => import('../pages/ArchiveStat')
+      '/command': () => import('../pages/Command'),
+      '/command/archive-stat': () => import('../pages/Command'),
+      '/command/command-center': () => import('../pages/Command'),
+      '/command/broadcast': () => import('../pages/Command')
     };
     loaders[path]?.();
   };
@@ -208,24 +206,11 @@ const Layout = ({ children }) => {
       permission: 'data-sm'
     },
     {
-      text: 'Archive Stat',
-      icon: <ScienceIcon />,
-      path: '/archive-stat',
-      description: 'ARCHIVESTAT device queues',
-      permission: 'devices'
-    },
-    {
-      text: 'Command Center',
+      text: 'Command',
       icon: <SatelliteIcon />,
-      path: '/command-center',
-      description: 'Send commands to devices',
-      permission: 'devices'
-    },
-    {
-      text: 'Broadcast Command',
-      icon: <CampaignIcon />,
-      path: '/broadcast-command',
-      description: 'Queue commands for multiple devices',
+      path: '/command/archive-stat',
+      matchPrefix: '/command',
+      description: 'Archive Stat, Command Center, and Broadcast',
       permission: 'devices'
     },
     { 
@@ -327,7 +312,9 @@ const Layout = ({ children }) => {
       <Box sx={{ flex: 1, overflow: 'auto' }}>
         <List sx={{ p: 1 }}>
           {filteredMenuItems.map((item) => {
-            const isSelected = location.pathname === item.path;
+            const isSelected = item.matchPrefix
+              ? location.pathname.startsWith(item.matchPrefix)
+              : location.pathname === item.path;
             
             return (
               <ListItem key={item.text} disablePadding sx={{ mb: 0.5 }}>
@@ -421,10 +408,18 @@ const Layout = ({ children }) => {
           
           <Box sx={{ flexGrow: 1 }}>
             <Typography variant="h6" fontWeight="600" color="text.primary">
-              {filteredMenuItems.find(item => item.path === location.pathname)?.text || 'Dashboard'}
+              {filteredMenuItems.find((item) => (
+                item.matchPrefix
+                  ? location.pathname.startsWith(item.matchPrefix)
+                  : item.path === location.pathname
+              ))?.text || 'Dashboard'}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              {filteredMenuItems.find(item => item.path === location.pathname)?.description || 'System overview'}
+              {filteredMenuItems.find((item) => (
+                item.matchPrefix
+                  ? location.pathname.startsWith(item.matchPrefix)
+                  : item.path === location.pathname
+              ))?.description || 'System overview'}
             </Typography>
           </Box>
           
