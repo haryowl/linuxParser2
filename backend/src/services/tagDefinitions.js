@@ -692,43 +692,43 @@ const tagDefinitions = {
         length: 4,
         description: 'Modbus 8'
     },
-    '0x0010': {
+    '0x000a': {
         name: 'Modbus 9',
         type: 'uint32',
         length: 4,
         description: 'Modbus 9'
     },
-    '0x000a': {
+    '0x000b': {
         name: 'Modbus 10',
         type: 'uint32',
         length: 4,
         description: 'Modbus 10'
     },
-    '0x000b': {
+    '0x000c': {
         name: 'Modbus 11',
         type: 'uint32',
         length: 4,
         description: 'Modbus 11'
     },
-    '0x000c': {
+    '0x000d': {
         name: 'Modbus 12',
         type: 'uint32',
         length: 4,
         description: 'Modbus 12'
     },
-    '0x000d': {
+    '0x000e': {
         name: 'Modbus 13',
         type: 'uint32',
         length: 4,
         description: 'Modbus 13'
     },
-    '0x000e': {
+    '0x000f': {
         name: 'Modbus 14',
         type: 'uint32',
         length: 4,
         description: 'Modbus 14'
     },
-    '0x000f': {
+    '0x0010': {
         name: 'Modbus 15',
         type: 'uint32',
         length: 4,

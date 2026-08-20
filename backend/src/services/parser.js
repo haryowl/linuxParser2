@@ -1036,9 +1036,17 @@ class GalileoskyParser extends EventEmitter {
                 break;
             }
 
-            const extendedTag = buffer.readUInt16BE(recordOffset);
+            // Protocol: multi-byte fields are little-endian. Prefer LE tag IDs;
+            // fall back to BE so older stress packets still decode.
+            let tagHex = `0x${buffer.readUInt16LE(recordOffset).toString(16).padStart(4, '0')}`.toLowerCase();
+            if (!this.tagDefinitionsCache.get(tagHex)) {
+                const beHex = `0x${buffer.readUInt16BE(recordOffset).toString(16).padStart(4, '0')}`.toLowerCase();
+                if (this.tagDefinitionsCache.get(beHex)) {
+                    tagHex = beHex;
+                }
+            }
             recordOffset += 2;
-            const tagHex = `0x${extendedTag.toString(16).padStart(4, '0')}`.toLowerCase();
+
             const { value, newOffset, definition, stopRecord } = this.parseTagValue(
                 buffer,
                 recordOffset,
@@ -1046,21 +1054,30 @@ class GalileoskyParser extends EventEmitter {
                 extendedBlockEnd
             );
 
+            if (!definition) {
+                // Do not abort the FE block: an unknown tag before Modbus would
+                // otherwise drop remaining sensors. Skip a typical 4-byte value.
+                logger.warn('Unknown extended tag encountered', {
+                    tagHex,
+                    connectionAddress
+                });
+                if (recordOffset + 4 <= extendedBlockEnd) {
+                    recordOffset += 4;
+                    continue;
+                }
+                break;
+            }
+
             if (stopRecord) {
                 break;
             }
 
-            if (value !== null && definition) {
+            if (value !== null) {
                 tags[tagHex] = {
                     value,
                     type: definition.type,
                     description: definition.description
                 };
-            } else {
-                logger.warn('Unknown extended tag encountered', {
-                    tagHex,
-                    connectionAddress
-                });
             }
 
             recordOffset = newOffset;
@@ -1235,13 +1252,8 @@ class GalileoskyParser extends EventEmitter {
                 newOffset = recordOffset + 4;
                 break;
             case 'uint32_modbus': {
-                const modbusBytes = [
-                    buffer.readUInt8(recordOffset),
-                    buffer.readUInt8(recordOffset + 3),
-                    buffer.readUInt8(recordOffset + 2),
-                    buffer.readUInt8(recordOffset + 1)
-                ];
-                value = Buffer.from(modbusBytes).readUInt32BE(0) / 100;
+                // Galileosky Modbus values are little-endian UINT32, scaled /100
+                value = buffer.readUInt32LE(recordOffset) / 100;
                 newOffset = recordOffset + 4;
                 break;
             }
@@ -1374,13 +1386,17 @@ class GalileoskyParser extends EventEmitter {
         const endOffset = currentOffset + length;
         
         while (currentOffset < endOffset) {
-            // Extended tags are 2 bytes each
-            const tag = buffer.readUInt16BE(currentOffset);
+            // Extended tag IDs are little-endian (BE fallback for legacy packets)
+            let tagHex = `0x${buffer.readUInt16LE(currentOffset).toString(16).padStart(4, '0')}`;
+            if (!tagDefinitions[tagHex] && !tagDefinitions[tagHex.toLowerCase()]) {
+                const beHex = `0x${buffer.readUInt16BE(currentOffset).toString(16).padStart(4, '0')}`;
+                if (tagDefinitions[beHex] || tagDefinitions[beHex.toLowerCase()]) {
+                    tagHex = beHex;
+                }
+            }
             currentOffset += 2;
-            
-            // Look up extended tag definition
-            const tagHex = `0x${tag.toString(16).padStart(4, '0')}`;
-            const definition = tagDefinitions[tagHex];
+
+            const definition = tagDefinitions[tagHex] || tagDefinitions[tagHex.toLowerCase()];
 
             if (!definition) {
                 logger.warn(`Unknown extended tag: ${tagHex}`);

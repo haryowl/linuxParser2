@@ -37,8 +37,7 @@ function buildImeiTag(imei) {
 
 /**
  * Build 0xFE extended-tags block.
- * Protocol: FE + uint16LE(length) + repeating [uint16BE(tagId) + value bytes]
- * Live parser reads extended tag IDs as big-endian.
+ * Protocol: FE + uint16LE(length) + repeating [uint16LE(tagId) + value bytes]
  */
 function buildExtendedTagsBlock(entries = []) {
   const parts = [];
@@ -52,7 +51,7 @@ function buildExtendedTagsBlock(entries = []) {
           return buf;
         })();
     const idBuf = Buffer.alloc(2);
-    idBuf.writeUInt16BE(tagId & 0xffff, 0);
+    idBuf.writeUInt16LE(tagId & 0xffff, 0);
     parts.push(idBuf, value);
   }
 
