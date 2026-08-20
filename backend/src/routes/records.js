@@ -10,6 +10,7 @@ const { requireAuth } = require('./auth');
 const { filterDevicesByPermission } = require('../middleware/permissions');
 const logger = require('../utils/logger');
 const { appendTimeRangeFilter, effectiveTimeOrderDesc } = require('../utils/recordTimeQuery');
+const { formatDateTimeYmdHms, cellValue } = require('../utils/formatDateTime');
 
 const EXPORT_MAX_ROWS = 50000;
 const PREVIEW_MAX_ROWS = 1000;
@@ -597,49 +598,38 @@ router.post('/export-sm', requireAuth, filterDevicesByPermission, async (req, re
                         transformed[customHeaders[field]] = record.deviceImei;
                         break;
                     case 'datetime':
-                        // Format date as YYYY-MM-DD HH:MM:SS
-                        if (record.datetime) {
-                            const date = new Date(record.datetime);
-                            const year = date.getFullYear();
-                            const month = String(date.getMonth() + 1).padStart(2, '0');
-                            const day = String(date.getDate()).padStart(2, '0');
-                            const hours = String(date.getHours()).padStart(2, '0');
-                            const minutes = String(date.getMinutes()).padStart(2, '0');
-                            const seconds = String(date.getSeconds()).padStart(2, '0');
-                            transformed[customHeaders[field]] = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-                        } else {
-                            transformed[customHeaders[field]] = '';
-                        }
+                        // Same Asia/Jakarta wall clock as Data SM preview (not server local TZ)
+                        transformed[customHeaders[field]] = formatDateTimeYmdHms(record.datetime);
                         break;
                     case 'latitude':
-                        transformed[customHeaders[field]] = record.latitude || '';
+                        transformed[customHeaders[field]] = cellValue(record.latitude);
                         break;
                     case 'longitude':
-                        transformed[customHeaders[field]] = record.longitude || '';
+                        transformed[customHeaders[field]] = cellValue(record.longitude);
                         break;
                     case 'altitude':
-                        transformed[customHeaders[field]] = record.altitude || '';
+                        transformed[customHeaders[field]] = cellValue(record.altitude);
                         break;
                     case 'satellites':
-                        transformed[customHeaders[field]] = record.satellites || '';
+                        transformed[customHeaders[field]] = cellValue(record.satellites);
                         break;
                     case 'speed':
-                        transformed[customHeaders[field]] = record.speed || '';
+                        transformed[customHeaders[field]] = cellValue(record.speed);
                         break;
                     case 'userData0':
-                        transformed[customHeaders[field]] = record.userData0 || '';
+                        transformed[customHeaders[field]] = cellValue(record.userData0);
                         break;
                     case 'userData1':
-                        transformed[customHeaders[field]] = record.userData1 || '';
+                        transformed[customHeaders[field]] = cellValue(record.userData1);
                         break;
                     case 'userData2':
-                        transformed[customHeaders[field]] = record.userData2 || '';
+                        transformed[customHeaders[field]] = cellValue(record.userData2);
                         break;
                     case 'modbus0':
-                        transformed[customHeaders[field]] = record.modbus0 || '';
+                        transformed[customHeaders[field]] = cellValue(record.modbus0);
                         break;
                     default:
-                        transformed[customHeaders[field]] = record[field] || '';
+                        transformed[customHeaders[field]] = cellValue(record[field]);
                 }
             });
             return transformed;

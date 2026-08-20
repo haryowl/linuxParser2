@@ -313,25 +313,62 @@ const DataSM = () => {
     }
   };
 
+  // Match backend Data SM export: Asia/Jakarta YYYY-MM-DD HH:mm:ss
+  const formatDateTimeYmdHms = (value) => {
+    if (value == null || value === '') return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Jakarta',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).formatToParts(date);
+    const get = (type) => parts.find((part) => part.type === type)?.value || '';
+    return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+  };
+
+  const cellValue = (value) => (value === null || value === undefined ? '' : value);
+
+  const hasMeaningfulData = (record) => {
+    const hasGPS = record.latitude != null && record.longitude != null;
+    const hasAltitude = record.altitude != null;
+    const hasSatellites = record.satellites != null;
+    const hasSpeed = record.speed != null;
+    const hasSensorData =
+      record.userData0 != null ||
+      record.userData1 != null ||
+      record.userData2 != null ||
+      record.modbus0 != null;
+    return hasGPS || hasAltitude || hasSatellites || hasSpeed || hasSensorData;
+  };
+
   const formatDataForDisplay = (records) => {
-    return records.map(record => {
-      const device = availableDevices.find(d => d.imei === record.deviceImei);
+    // Same filter as /api/records/export-sm — drop IMEI-only / empty shell rows
+    return records.filter(hasMeaningfulData).map((record) => {
+      const device = availableDevices.find((d) => d.imei === record.deviceImei);
       return {
         deviceName: device ? device.name : record.deviceImei,
         deviceImei: record.deviceImei,
-        datetime: record.datetime ? new Date(record.datetime).toLocaleString() : 'N/A',
-        latitude: record.latitude === null || record.latitude === undefined ? 'N/A' : record.latitude,
-        longitude: record.longitude === null || record.longitude === undefined ? 'N/A' : record.longitude,        
-		speed: record.speed === null || record.speed === undefined ? 'N/A' : record.speed,
-        altitude: record.altitude === null || record.altitude === undefined ? 'N/A' : record.altitude,
-        satellites: record.satellites === null || record.satellites === undefined ? 'N/A' : record.satellites,
-        userData0: record.userData0 === null || record.userData0 === undefined ? 'N/A' : record.userData0,
-        userData1: record.userData1 === null || record.userData1 === undefined ? 'N/A' : record.userData1,
-        modbus0: record.modbus0 === null || record.modbus0 === undefined ? 'N/A' : record.modbus0,
-        userData2: record.userData2 === null || record.userData2 === undefined ? 'N/A' : record.userData2
+        datetime: formatDateTimeYmdHms(record.datetime),
+        latitude: cellValue(record.latitude),
+        longitude: cellValue(record.longitude),
+        speed: cellValue(record.speed),
+        altitude: cellValue(record.altitude),
+        satellites: cellValue(record.satellites),
+        userData0: cellValue(record.userData0),
+        userData1: cellValue(record.userData1),
+        modbus0: cellValue(record.modbus0),
+        userData2: cellValue(record.userData2)
       };
     });
   };
+
+  const previewRecords = formatDataForDisplay(records).slice(0, 100);
 
   return (
     <Container maxWidth="xl" sx={{ py: 4 }}>
@@ -531,13 +568,13 @@ const DataSM = () => {
           </Box>
 
           {/* Data Preview */}
-          {records.length > 0 && (
+          {previewRecords.length > 0 && (
             <Box sx={{ mt: 3 }}>
               <Typography variant="h6" gutterBottom>
-                Data Preview (100 records shown)
+                Data Preview ({previewRecords.length} records shown)
               </Typography>
               <Typography variant="body2" color="text.secondary" gutterBottom>
-                {startDate} {startHour}:00 - {endDate} {endHour}:59
+                {startDate} {startHour}:00 - {endDate} {endHour}:59 (timestamps Asia/Jakarta)
               </Typography>
               <TableContainer component={Paper} sx={{ mt: 2 }}>
                 <Table size="small">
@@ -556,7 +593,7 @@ const DataSM = () => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {formatDataForDisplay(records.slice(0, 100)).map((record, index) => (
+                    {previewRecords.map((record, index) => (
                       <TableRow key={index}>
                         <TableCell>{record.deviceImei}</TableCell>
                         <TableCell>{record.datetime}</TableCell>
